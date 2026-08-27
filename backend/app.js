@@ -172,6 +172,11 @@ async function recordDonation(charge) {
 
 // ===== app =====
 const app = express();
+
+// OPTIONS explícito (200) — o adaptador Netlify não aceita 204, e o preflight do painel
+// da SedePay cai no OPTIONS. Deve ser registrado ANTES do cors() e de qualquer rota.
+app.options('*', (req, res) => res.status(200).end());
+
 app.use(cors());
 
 // Webhook com corpo bruto (para validar HMAC-SHA256) — registrado ANTES do express.json()
