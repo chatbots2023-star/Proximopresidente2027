@@ -228,6 +228,16 @@ app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true, mode: MODE, webhookConfigured: WEBHOOK_READY }));
 
+// Diagnóstico temporário — remove antes do deploy final
+app.get('/api/debug/pepper', async (req, res) => {
+  try {
+    const r = await pepper('/');
+    res.json({ status: r.status, data: r.data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/state', (req, res) => res.json(computeState()));
 
 // ===== criar cobrança =====
