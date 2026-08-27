@@ -232,7 +232,21 @@ app.get('/api/health', (req, res) => res.json({ ok: true, mode: MODE, webhookCon
 app.get('/api/debug/pepper', async (req, res) => {
   try {
     const r = await pepper('/');
-    res.json({ status: r.status, data: r.data });
+    const body = {
+      api_token: PEPPER_API_TOKEN,
+      amount: 10000,
+      payment_method: 'pix',
+      cart: [{ title: 'Apoio · Teste', price: 10000, quantity: 1, operation_type: 1 }],
+      customer: {
+        name: 'Apoiador(a) Eleitoral',
+        email: 'apoiador@proximopresidente.com.br',
+        phone_number: '11999999999',
+        document: '52998224725',
+      },
+      webhook_url: 'https://proximopresidente2027br.netlify.app/api/webhook/pepper',
+    };
+    const p = await pepper('/transactions', { method: 'POST', body });
+    res.json({ status: r.status, data: r.data, postStatus: p.status, postData: p.data });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
