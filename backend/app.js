@@ -175,9 +175,11 @@ const app = express();
 app.use(cors());
 
 // Webhook com corpo bruto (para validar HMAC-SHA256) — registrado ANTES do express.json()
+app.get('/api/webhook/sedepay', (req, res) => res.status(200).json({ ok: true }));
+
 app.post('/api/webhook/sedepay', express.raw({ type: () => true }), async (req, res) => {
   if (!WEBHOOK_READY) {
-    return res.status(401).json({ error: 'Webhook não configurado (falta SEDEPAY_WEBHOOK_SECRET).' });
+    return res.status(200).json({ ok: true, ignored: true, reason: 'sem secret' });
   }
   const signature = req.get('X-SedePay-Signature') || '';
   const expected = crypto.createHmac('sha256', SEDEPAY_WEBHOOK_SECRET).update(req.body).digest('hex');
