@@ -2,17 +2,15 @@ import { app } from './app.js';
 
 const PORT = process.env.PORT || 3001;
 
-const SEDEPAY_API_KEY = (process.env.SEDEPAY_API_KEY || '').trim();
-const HAS_KEY = SEDEPAY_API_KEY && SEDEPAY_API_KEY !== 'sk_live_SUA_CHAVE';
-const MODE = HAS_KEY ? 'sedepay' : 'mock';
-const SEDEPAY_WEBHOOK_SECRET = (process.env.SEDEPAY_WEBHOOK_SECRET || '').trim();
-const WEBHOOK_READY = Boolean(SEDEPAY_WEBHOOK_SECRET) && !SEDEPAY_WEBHOOK_SECRET.includes('SUA_CHAVE');
+const PEPPER_API_TOKEN = (process.env.PEPPER_API_TOKEN || '').trim();
+const HAS_KEY = Boolean(PEPPER_API_TOKEN);
+const MODE = HAS_KEY ? 'pepper' : 'mock';
 
 app.listen(PORT, () => {
   console.log(`API Próximo Presidente rodando em http://localhost:${PORT} (modo: ${MODE})`);
-  if (MODE === 'sedepay') {
-    console.log(`SedePay conectada. Webhook: ${WEBHOOK_READY ? 'configurado' : 'NÃO configurado (defina SEDEPAY_WEBHOOK_SECRET)'}`);
+  if (MODE === 'pepper') {
+    console.log('Pepper conectada. Cobranças PIX serão geradas pela Pepper.');
   } else {
-    console.log('Sem chave SedePay válida -> modo demonstração com PIX simulado.');
+    console.log('Sem token Pepper válido -> modo demonstração com PIX simulado.');
   }
 });

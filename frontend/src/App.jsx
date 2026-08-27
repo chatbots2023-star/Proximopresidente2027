@@ -34,7 +34,7 @@ function useAnimatedNumber(target) {
 function Ticker({ items }) {
   const line = items.map((d) => {
     const c = getCandidate(d.candidateId);
-    const val = d.method === 'usdt' ? `${d.amount} USDT` : formatBRL(d.amount);
+    const val = formatBRL(d.amount);
     return `${d.name} apoiou ${c ? c.short : 'um candidato'} com ${val}`;
   });
   if (!line.length) line.push('Seja a primeira pessoa a apoiar um candidato');
@@ -152,8 +152,8 @@ export default function App() {
             <span className="live-badge">
               <span className="live-dot" /> AO VIVO
             </span>
-            <span className={`mode-badge ${mode === 'sedepay' ? 'stripe' : 'demo'}`}>
-              {mode === 'sedepay' ? 'SedePay · PIX / USDT' : 'Modo demonstração'}
+            <span className={`mode-badge ${mode === 'pepper' ? 'stripe' : 'demo'}`}>
+              {mode === 'pepper' ? 'Pepper · PIX' : 'Modo demonstração'}
             </span>
           </div>
         </div>
@@ -252,7 +252,7 @@ export default function App() {
               <span><b>1</b> Escolha seu candidato</span>
               <span><b>2</b> Digite o valor R$</span>
               <span><b>3</b> Aperte ENTER</span>
-              <span><b>4</b> Pague com PIX ou USDT</span>
+              <span><b>4</b> Pague com PIX</span>
             </div>
           </div>
 
@@ -294,7 +294,7 @@ export default function App() {
           <p className="footer-title">Próximo Presidente · Eleição justa e democratizada · Brasil 2027</p>
           <p className="footer-sub">
             Projeto demonstrativo de votação por doações. Pagamentos processados de forma segura via{' '}
-            <strong>SedePay</strong> (PIX e USDT). Nenhum voto oficial é emitido neste site.
+            <strong>Pepper</strong> (PIX). Nenhum voto oficial é emitido neste site.
           </p>
         </div>
       </footer>
@@ -320,11 +320,7 @@ export default function App() {
               {getCandidate(celebration.donation?.candidateId)?.short || 'Seu candidato'}
             </div>
             <div className="celebration-amount">
-              Doação de{' '}
-              {celebration.donation?.method === 'usdt'
-                ? `${celebration.donation?.amount || 0} USDT`
-                : formatBRL(celebration.donation?.amount || 0)}{' '}
-              confirmada
+              Doação de {formatBRL(celebration.donation?.amount || 0)} confirmada
             </div>
             {celebration.isTop1 ? (
               <div className="celebration-top1">TOP 1 DO RANKING</div>

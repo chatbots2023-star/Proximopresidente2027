@@ -3,20 +3,15 @@ import cors from 'cors';
 import crypto from 'node:crypto';
 import { loadState, saveState } from './storage.js';
 
-// ===== SedePay (apenas no backend, via variável de ambiente) =====
-const SEDEPAY_API_KEY = (process.env.SEDEPAY_API_KEY || '').trim();
-const SEDEPAY_WEBHOOK_SECRET = (process.env.SEDEPAY_WEBHOOK_SECRET || '').trim();
-const SEDEPAY_BASE = 'https://api.sedepay.com';
-const HAS_KEY = SEDEPAY_API_KEY && SEDEPAY_API_KEY !== 'sk_live_SUA_CHAVE';
-const MODE = HAS_KEY ? 'sedepay' : 'mock';
-const WEBHOOK_READY = Boolean(SEDEPAY_WEBHOOK_SECRET) && !SEDEPAY_WEBHOOK_SECRET.includes('SUA_CHAVE');
+// ===== Pepper (apenas no backend, via variável de ambiente) =====
+const PEPPER_API_TOKEN = (process.env.PEPPER_API_TOKEN || '').trim();
+const PEPPER_BASE = 'https://api.cloud.pepperpay.com.br/public/v1';
+const HAS_KEY = Boolean(PEPPER_API_TOKEN);
+const MODE = HAS_KEY ? 'pepper' : 'mock';
+const WEBHOOK_READY = HAS_KEY;
 
 const MIN_DONATION = 10;
 const MAX_DONATION = 10000;
-const MIN_PIX = 10;
-const MAX_PIX = 500;
-const MIN_USDT = 5;
-const USDT_WALLET = (process.env.USDT_WALLET_ADDRESS || '').trim() || 'TKrHKch9gjZwmcmLF3CiAgNVHh2i9mrx5L';
 
 const SOCIAL_NETWORKS = ['instagram', 'youtube', 'linkedin', 'facebook', 'tiktok', 'kwai', 'x'];
 const SOCIAL_BASE_URLS = {
@@ -114,16 +109,23 @@ function computeState() {
   return { mode: MODE, webhookConfigured: WEBHOOK_READY, totalRaised, totalSupporters: state.donations.length, candidates, recent, topSupporters };
 }
 
-// ===== helpers SedePay =====
+// ===== helpers Pepper =====
 function newReference() {
   return 'br' + crypto.randomBytes(10).toString('hex');
 }
 
-async function sedepay(pathname, options = {}) {
-  const res = await fetch(SEDEPAY_BASE + pathname, {
+function siteUrl(req) {
+  const proto = req.get('x-forwarded-proto') || 'https';
+  const host = req.get('x-forwarded-host') || req.get('host') || 'localhost:3001';
+  return `${proto}://${host}`;
+}
+
+async function pepper(pathname, options = {}) {
+  const res = await fetch(PEPPER_BASE + pathname, {
     method: options.method || 'GET',
     headers: {
-      Authorization: `Bearer ${SEDEPAY_API_KEY}`,
+      Authorization: `Bearer ${PEPPER_API_TOKEN}`,
+      Accept: 'application/json',
       'Content-Type': 'application/json',
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
@@ -139,8 +141,25 @@ async function sedepay(pathname, options = {}) {
   return { status: res.status, data };
 }
 
-function isPaidStatus(method, status) {
-  return method === 'pix' ? status === 'PAID' : status === 'FINISHED';
+function mapPepperStatus(status) {
+  switch (status) {
+    case 'paid':
+      return 'PAID';
+    case 'refunded':
+      return 'REFUNDED';
+    case 'refused':
+      return 'REFUSED';
+    case 'cancelled':
+      return 'CANCELED';
+    case 'chargeback':
+      return 'CHARGEBACK';
+    default:
+      return 'PENDING';
+  }
+}
+
+function isPaidStatus(status) {
+  return status === 'PAID';
 }
 
 async function recordDonation(charge) {
@@ -173,59 +192,35 @@ async function recordDonation(charge) {
 // ===== app =====
 const app = express();
 
-// OPTIONS explícito (200) — o adaptador Netlify não aceita 204, e o preflight do painel
-// da SedePay cai no OPTIONS. Deve ser registrado ANTES do cors() e de qualquer rota.
+// OPTIONS explícito (200) — o adaptador Netlify não aceita 204, e o preflight de
+// validadores externos cai no OPTIONS. Deve ser registrado ANTES do cors() e de qualquer rota.
 app.options('*', (req, res) => res.status(200).end());
 
 app.use(cors());
 
-// Webhook com corpo bruto (para validar HMAC-SHA256) — registrado ANTES do express.json()
-app.get('/api/webhook/sedepay', (req, res) => res.status(200).json({ ok: true }));
+// Webhook da Pepper (versão 2.0 do payload) — registrado ANTES do express.json()
+app.get('/api/webhook/pepper', (req, res) => res.status(200).json({ ok: true }));
 
-app.post('/api/webhook/sedepay', express.raw({ type: () => true }), async (req, res) => {
-  if (!WEBHOOK_READY) {
-    return res.status(200).json({ ok: true, ignored: true, reason: 'sem secret' });
-  }
-  const signature = req.get('X-SedePay-Signature') || '';
-  const expected = crypto.createHmac('sha256', SEDEPAY_WEBHOOK_SECRET).update(req.body).digest('hex');
-  const a = Buffer.from(String(signature));
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return res.status(401).json({ error: 'Assinatura inválida.' });
+app.post('/api/webhook/pepper', express.json({ type: 'application/json' }), async (req, res) => {
+  const event = req.body || {};
+  const transactionId = event?.transaction?.id;
+  if (!transactionId) {
+    return res.status(200).json({ ok: true, ignored: true, reason: 'sem transaction.id' });
   }
 
-  let event;
-  try {
-    event = JSON.parse(req.body.toString('utf8'));
-  } catch {
-    return res.status(400).json({ error: 'Payload inválido.' });
-  }
-
-  const reference = event?.data?.reference;
-  const charge = reference && state.charges[reference];
+  const charge = Object.values(state.charges).find(
+    (c) => c.pepperHash === transactionId || c.pepperTransactionId === transactionId
+  );
   if (!charge) return res.status(200).json({ ok: true, ignored: true });
 
-  switch (event.event) {
-    case 'pix.paid':
-      charge.status = 'PAID';
-      await saveState(state);
-      await recordDonation(charge);
-      break;
-    case 'pix.refunded':
-      charge.status = 'REFUNDED';
-      break;
-    case 'pix.canceled':
-      charge.status = 'CANCELED';
-      break;
-    case 'crypto.paid':
-      charge.status = 'FINISHED';
-      await saveState(state);
-      await recordDonation(charge);
-      break;
-    default:
-      break;
+  const status = mapPepperStatus(event?.status || event?.transaction?.status || charge.status);
+  if (status !== charge.status) {
+    charge.status = status;
+    await saveState(state);
   }
-  await saveState(state);
+  if (isPaidStatus(status)) {
+    await recordDonation(charge);
+  }
   return res.status(200).json({ ok: true });
 });
 
@@ -246,102 +241,83 @@ app.post('/api/checkout', async (req, res) => {
   if (value < MIN_DONATION || value > MAX_DONATION) {
     return res.status(422).json({ error: `Doações de R$ ${MIN_DONATION},00 a R$ ${MAX_DONATION},00.` });
   }
-
-  const pix = method === 'pix';
-  const usdt = method === 'usdt';
-
-  if (!pix && !usdt) return res.status(400).json({ error: 'Método de pagamento inválido.' });
+  if (method !== 'pix') return res.status(400).json({ error: 'Método de pagamento inválido.' });
 
   try {
-    // ---- modo demonstração (sem chave SedePay) ----
-    if (MODE !== 'sedepay') {
+    // ---- modo demonstração (sem token Pepper) ----
+    if (MODE !== 'pepper') {
       const reference = newReference();
       const charge = {
         reference,
-        method: pix ? 'pix' : 'usdt',
-        network: pix ? null : 'trc20',
+        method: 'pix',
+        network: null,
         candidateId,
         amount: value,
-        status: pix ? 'PENDING' : 'WAITING',
+        status: 'PENDING',
         mock: true,
         ts: Date.now(),
       };
-      if (pix) {
-        charge.qrCodeText = `00020126580014BR.GOV.BCB.PIX0136${reference.toUpperCase()}52040000530398654${String(value.toFixed(2)).replace('.', '')}5802BR5913SIMULACAO6009DEMO2027622507DEMO0016304A01`;
-      } else {
-        charge.address = USDT_WALLET;
-        charge.manual = true;
-      }
+      charge.qrCodeText = `00020126580014BR.GOV.BCB.PIX0136${reference.toUpperCase()}52040000530398654${String(value.toFixed(2)).replace('.', '')}5802BR5913SIMULACAO6009DEMO2027622507DEMO0016304A01`;
       state.charges[reference] = charge;
       await saveState(state);
       return res.json({ mode: 'mock', ...charge });
     }
 
-    let reference = newReference();
-
-    if (pix) {
-      if (value < MIN_PIX || value > MAX_PIX) {
-        return res.status(422).json({ error: `Para PIX, a SedePay aceita de R$ ${MIN_PIX},00 a R$ ${MAX_PIX},00. Use USDT (TRC20) para valores acima.` });
-      }
-      const body = {
-        amount: value,
-        reference,
-        product: { title: `Apoio · ${candidate.name} (${candidate.party})` },
-        customer: {
-          name: 'Apoiador(a) Eleitoral',
-          email: 'apoiador@proximopresidente.com.br',
-          phone: '11999999999',
-          document: { type: 'cpf', number: '52998224725' },
+    const reference = newReference();
+    const amountCents = Math.round(value * 100);
+    const body = {
+      api_token: PEPPER_API_TOKEN,
+      amount: amountCents,
+      payment_method: 'pix',
+      cart: [
+        {
+          title: `Apoio · ${candidate.name} (${candidate.party})`,
+          price: amountCents,
+          quantity: 1,
+          operation_type: 1,
         },
-      };
+      ],
+      customer: {
+        name: 'Apoiador(a) Eleitoral',
+        email: 'apoiador@proximopresidente.com.br',
+        phone_number: '11999999999',
+        document: '52998224725',
+      },
+      webhook_url: `${siteUrl(req)}/api/webhook/pepper`,
+    };
 
-      let r = await sedepay('/v1/pix/charges', { method: 'POST', body });
-      if (r.status === 409) {
-        reference = newReference();
-        body.reference = reference;
-        r = await sedepay('/v1/pix/charges', { method: 'POST', body });
-      }
-      if (r.status === 401) return res.status(500).json({ error: 'Chave SedePay inválida ou sem permissão.' });
-      if (r.status === 422) return res.status(422).json({ error: 'Valor fora do limite permitido pela SedePay.' });
-      if (r.status === 429) return res.status(429).json({ error: 'Limite de requisições atingido. Aguarde um instante.' });
-      if (r.status !== 201 && r.status !== 200) {
-        return res.status(502).json({ error: 'SedePay indisponível no momento. Tente novamente.' });
-      }
-
-      const charge = {
-        reference,
-        sedepayId: r.data?.id || null,
-        method: 'pix',
-        network: null,
-        candidateId,
-        amount: value,
-        status: r.data?.status || 'PENDING',
-        qrCodeText: r.data?.pix?.qrCodeText || null,
-        ts: Date.now(),
-      };
-      state.charges[reference] = charge;
-      await saveState(state);
-      return res.json({ mode: 'sedepay', ...charge });
+    const r = await pepper('/transactions', { method: 'POST', body });
+    if (r.status === 401 || r.status === 403) {
+      return res.status(500).json({ error: 'Token Pepper inválido ou sem permissão.' });
+    }
+    if (r.status === 400) {
+      const msg = r.data?.message || 'Dados inválidos para a Pepper.';
+      const detail = Array.isArray(r.data?.errors) ? ` ${r.data.errors.join('; ')}` : '';
+      return res.status(422).json({ error: msg + detail });
+    }
+    if (r.status === 429) {
+      return res.status(429).json({ error: 'Limite de requisições atingido. Aguarde um instante.' });
+    }
+    if (r.status !== 200) {
+      return res.status(502).json({ error: 'Pepper indisponível no momento. Tente novamente.' });
     }
 
-    // ---- USDT (TRC20) via carteira fixa ----
-    if (value < MIN_USDT) {
-      return res.status(422).json({ error: `Valor mínimo para USDT TRC20 é ${MIN_USDT} USDT.` });
-    }
     const charge = {
       reference,
-      method: 'usdt',
-      network: 'trc20',
+      pepperHash: r.data?.hash || null,
+      pepperTransactionId: r.data?.transaction || null,
+      method: 'pix',
+      network: null,
       candidateId,
       amount: value,
-      status: 'WAITING',
-      address: USDT_WALLET,
-      manual: true,
+      status: mapPepperStatus(r.data?.payment_status),
+      qrCodeText: r.data?.pix?.pix_qr_code || null,
+      qrCodeUrl: r.data?.pix?.pix_url || null,
       ts: Date.now(),
     };
     state.charges[reference] = charge;
     await saveState(state);
-    return res.json({ mode: 'sedepay', ...charge });
+    return res.json({ mode: 'pepper', ...charge });
   } catch (err) {
     console.error('checkout error:', err.message);
     return res.status(500).json({ error: 'Falha ao criar a cobrança. Tente novamente.' });
@@ -354,24 +330,26 @@ app.get('/api/charge/:reference', async (req, res) => {
   const charge = state.charges[reference];
   if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
 
-  if (charge.manual) {
+  if (charge.mock) {
     return res.json({ charge, state: computeState() });
   }
 
-  if (charge.mock || isPaidStatus(charge.method, charge.status)) {
-    if (isPaidStatus(charge.method, charge.status)) {
-      return res.json({ charge, ...(await recordDonation(charge)) });
-    }
+  if (isPaidStatus(charge.status)) {
+    return res.json({ charge, ...(await recordDonation(charge)) });
+  }
+
+  if (!charge.pepperHash) {
     return res.json({ charge, state: computeState() });
   }
 
-  const pathname = charge.method === 'pix' ? `/v1/pix/charges/${reference}` : `/v1/crypto/charges/${reference}`;
   try {
-    const q = await sedepay(pathname);
-    const status = q.data?.status || charge.status;
-    charge.status = status;
-    await saveState(state);
-    if (isPaidStatus(charge.method, status)) {
+    const q = await pepper(`/transactions/${charge.pepperHash}`);
+    const newStatus = mapPepperStatus(q.data?.payment_status || charge.status);
+    if (newStatus !== charge.status) {
+      charge.status = newStatus;
+      await saveState(state);
+    }
+    if (isPaidStatus(newStatus)) {
       return res.json({ charge, ...(await recordDonation(charge)) });
     }
     return res.json({ charge, state: computeState() });
@@ -382,21 +360,10 @@ app.get('/api/charge/:reference', async (req, res) => {
 
 // ===== simular pagamento (somente em modo demonstração) =====
 app.post('/api/charge/:reference/simulate', async (req, res) => {
-  if (MODE === 'sedepay') return res.status(403).json({ error: 'Simulação disponível apenas no modo demonstração.' });
+  if (MODE === 'pepper') return res.status(403).json({ error: 'Simulação disponível apenas no modo demonstração.' });
   const charge = state.charges[req.params.reference];
   if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
-  charge.status = charge.method === 'pix' ? 'PAID' : 'FINISHED';
-  await saveState(state);
-  return res.json({ charge, ...(await recordDonation(charge)) });
-});
-
-// ===== confirmar envio manual (USDT via carteira fixa) =====
-app.post('/api/charge/:reference/manual-confirm', async (req, res) => {
-  const charge = state.charges[req.params.reference];
-  if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
-  if (!charge.manual) return res.status(403).json({ error: 'Esta cobrança não aceita confirmação manual.' });
-  charge.status = 'FINISHED';
-  charge.confirmedAt = Date.now();
+  charge.status = 'PAID';
   await saveState(state);
   return res.json({ charge, ...(await recordDonation(charge)) });
 });

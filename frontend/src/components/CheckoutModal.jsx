@@ -4,10 +4,7 @@ import CandidateAvatar from './CandidateAvatar.jsx';
 import { formatBRL } from '../candidates.js';
 import { api } from '../api.js';
 
-const METHODS = [
-  { id: 'pix', label: 'PIX', desc: 'QR Code na hora' },
-  { id: 'usdt', label: 'USDT TRC20', desc: 'Rede Tron' },
-];
+const METHODS = [{ id: 'pix', label: 'PIX', desc: 'QR Code na hora' }];
 
 const SOCIAL_OPTIONS = [
   ['instagram', 'Instagram'],
@@ -33,6 +30,10 @@ function statusLabel(status) {
       return 'Cobrança cancelada.';
     case 'EXPIRED':
       return 'Cobrança expirada.';
+    case 'REFUSED':
+      return 'Pagamento recusado.';
+    case 'REFUNDED':
+      return 'Pagamento estornado.';
     default:
       return 'Aguardando pagamento…';
   }
@@ -65,7 +66,6 @@ export default function CheckoutModal({ candidate, amount, siteMode, onPaid, onC
   const [phase, setPhase] = useState('form'); // 'form' | 'payment'
   const [charge, setCharge] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [statusText, setStatusText] = useState('Aguardando pagamento…');
   const [copied, setCopied] = useState(null);
   const [error, setError] = useState(null);
@@ -77,7 +77,7 @@ export default function CheckoutModal({ candidate, amount, siteMode, onPaid, onC
 
   const { seconds, expired, setExpired } = useCountdown(phase === 'payment');
 
-  const isPix = method === 'pix';
+  const isPix = true;
 
   const handlePaid = useCallback((result) => {
     setPaidResult(result);
@@ -92,7 +92,7 @@ export default function CheckoutModal({ candidate, amount, siteMode, onPaid, onC
 
   // polling de status enquanto aguarda pagamento
   useEffect(() => {
-    if (phase !== 'payment' || expired || siteMode !== 'sedepay' || !charge) return;
+    if (phase !== 'payment' || expired || siteMode !== 'pepper' || !charge) return;
     let alive = true;
     const poll = async () => {
       try {
@@ -159,20 +159,6 @@ export default function CheckoutModal({ candidate, amount, siteMode, onPaid, onC
     }
   }
 
-  async function confirmManualPayment() {
-    if (!charge) return;
-    setConfirming(true);
-    setStatusText('Confirmando envio…');
-    try {
-      const r = await api.manualConfirm(charge.reference);
-      handlePaid(r);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setConfirming(false);
-    }
-  }
-
   async function submitSocial() {
     setSocialError(null);
     if (!socialForm.name.trim()) return setSocialError('Informe seu nome ou apelido.');
@@ -197,9 +183,9 @@ export default function CheckoutModal({ candidate, amount, siteMode, onPaid, onC
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="checkout checkout-sedepay" onClick={(e) => e.stopPropagation()}>
+      <div className="checkout checkout-pepper" onClick={(e) => e.stopPropagation()}>
         <div className="checkout-header">
-          <span className="checkout-shield">PAGAMENTO SEDEPAY</span>
+          <span className="checkout-shield">PAGAMENTO PIX</span>
           <button className="checkout-close" onClick={onClose} aria-label="Fechar">
             ×
           </button>
@@ -214,49 +200,21 @@ export default function CheckoutModal({ candidate, amount, siteMode, onPaid, onC
             <div className="checkout-party">
               {candidate.party} · Nº {candidate.number}
             </div>
-            <div className="checkout-amount">
-              {isPix || !charge ? formatBRL(amount) : `${amount} USDT`}
-            </div>
+            <div className="checkout-amount">{formatBRL(amount)}</div>
           </div>
         </div>
 
         {phase === 'form' && (
           <>
-            <div className="method-tabs">
-              {METHODS.map((m) => (
-                <button
-                  key={m.id}
-                  className={`method-tab ${method === m.id ? 'active' : ''}`}
-                  onClick={() => setMethod(m.id)}
-                  type="button"
-                >
-                  <span className="method-tab-label">{m.label}</span>
-                  <span className="method-tab-desc">{m.desc}</span>
-                </button>
-              ))}
+            <div className="checkout-form">
+              <div className="checkout-note">
+                Você vai doar <strong>{formatBRL(amount)}</strong>. O QR Code PIX será gerado na hora, sem precisar
+                informar seus dados.
+              </div>
+              <button className="btn btn-primary btn-block" onClick={handleCreate} disabled={creating}>
+                {creating ? 'Gerando…' : `Gerar PIX de ${formatBRL(amount)}`}
+              </button>
             </div>
-
-            {isPix ? (
-              <div className="checkout-form">
-                <div className="usdt-note">
-                  Você vai doar <strong>{formatBRL(amount)}</strong>. O QR Code PIX será gerado na hora, sem precisar
-                  informar seus dados.
-                </div>
-                <button className="btn btn-primary btn-block" onClick={handleCreate} disabled={creating}>
-                  {creating ? 'Gerando…' : `Gerar PIX de ${formatBRL(amount)}`}
-                </button>
-              </div>
-            ) : (
-              <div className="checkout-form">
-                <div className="usdt-note">
-                  Você vai doar <strong>{amount} USDT</strong> na rede <strong>TRC20</strong>. Deposite o valor exato na
-                  carteira de recebimento e confirme o envio.
-                </div>
-                <button className="btn btn-primary btn-block" onClick={handleCreate} disabled={creating}>
-                  {creating ? 'Gerando…' : 'Continuar para USDT TRC20'}
-                </button>
-              </div>
-            )}
             {error && <div className="form-error">{error}</div>}
           </>
         )}
@@ -273,32 +231,18 @@ export default function CheckoutModal({ candidate, amount, siteMode, onPaid, onC
               </div>
             ) : (
               <>
-                {isPix ? (
-                  <div className="pix-pay">
-                    <div className="qr-box">
-                      <canvas ref={qrRef} className="qr-canvas" />
-                    </div>
-                    <div className="copy-row">
-                      <input readOnly value={charge.qrCodeText || ''} className="copy-input" onFocus={(e) => e.target.select()} />
-                      <button className="copy-btn" onClick={() => copy(charge.qrCodeText, 'code')}>
-                        {copied === 'code' ? 'Copiado!' : 'Copiar'}
-                      </button>
-                    </div>
-                    <div className="pay-amount">Valor: {formatBRL(amount)}</div>
+                <div className="pix-pay">
+                  <div className="qr-box">
+                    <canvas ref={qrRef} className="qr-canvas" />
                   </div>
-                ) : (
-                  <div className="usdt-pay">
-                    <div className="usdt-address-label">Deposite {amount} USDT na rede TRC20 nesta carteira:</div>
-                    <div className="copy-row">
-                      <input readOnly value={charge.address || ''} className="copy-input" onFocus={(e) => e.target.select()} />
-                      <button className="copy-btn" onClick={() => copy(charge.address, 'address')}>
-                        {copied === 'address' ? 'Copiado!' : 'Copiar'}
-                      </button>
-                    </div>
-                    <div className="pay-amount">Valor exato: {amount} USDT</div>
-                    <div className="usdt-manual-note">Após enviar, clique em "Já enviei o USDT" para registrar seu apoio.</div>
+                  <div className="copy-row">
+                    <input readOnly value={charge.qrCodeText || ''} className="copy-input" onFocus={(e) => e.target.select()} />
+                    <button className="copy-btn" onClick={() => copy(charge.qrCodeText, 'code')}>
+                      {copied === 'code' ? 'Copiado!' : 'Copiar'}
+                    </button>
                   </div>
-                )}
+                  <div className="pay-amount">Valor: {formatBRL(amount)}</div>
+                </div>
 
                 <div className="pay-status">
                   <span className="status-dot" />
@@ -310,15 +254,9 @@ export default function CheckoutModal({ candidate, amount, siteMode, onPaid, onC
                   <span className="countdown-time">{mmss}</span>
                 </div>
 
-                {isPix ? (
-                  siteMode === 'mock' && (
-                    <button className="btn btn-primary btn-block" onClick={simulatePayment}>
-                      Simular pagamento concluído (demo)
-                    </button>
-                  )
-                ) : (
-                  <button className="btn btn-primary btn-block" onClick={confirmManualPayment} disabled={confirming}>
-                    {confirming ? 'Confirmando…' : 'Já enviei o USDT — Confirmar envio'}
+                {siteMode === 'mock' && (
+                  <button className="btn btn-primary btn-block" onClick={simulatePayment}>
+                    Simular pagamento concluído (demo)
                   </button>
                 )}
               </>

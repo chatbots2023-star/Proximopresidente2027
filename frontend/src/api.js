@@ -18,8 +18,6 @@ export const api = {
   chargeStatus: (reference) => request(`/api/charge/${reference}`),
   simulate: (reference) =>
     request(`/api/charge/${reference}/simulate`, { method: 'POST' }),
-  manualConfirm: (reference) =>
-    request(`/api/charge/${reference}/manual-confirm`, { method: 'POST' }),
   donationSocial: (reference, body) =>
     request(`/api/donations/${reference}/social`, {
       method: 'POST',

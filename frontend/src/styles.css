@@ -1361,54 +1361,12 @@ button {
   }
 }
 
-/* ---------- Checkout SedePay ---------- */
-.checkout-sedepay {
+/* ---------- Checkout ---------- */
+.checkout-pepper {
   max-width: 460px;
 }
 
-.method-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.method-tab {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 12px 6px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
-}
-
-.method-tab:hover {
-  border-color: rgba(255, 223, 0, 0.4);
-}
-
-.method-tab.active {
-  border-color: var(--gold);
-  background: rgba(255, 223, 0, 0.08);
-  box-shadow: 0 0 0 1px rgba(255, 223, 0, 0.4), 0 0 18px rgba(255, 223, 0, 0.12);
-}
-
-.method-tab-label {
-  font-family: var(--font-disp);
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.method-tab-desc {
-  font-size: 10px;
-  color: var(--muted);
-  text-align: center;
-}
-
-.usdt-note {
+.checkout-note {
   margin-top: 16px;
   font-size: 13px;
   color: var(--muted);
@@ -1416,15 +1374,8 @@ button {
   text-align: center;
 }
 
-.usdt-note strong {
+.checkout-note strong {
   color: var(--gold);
-}
-
-.usdt-manual-note {
-  margin-top: 10px;
-  font-size: 11px;
-  color: var(--muted);
-  text-align: center;
 }
 
 .form-error {
@@ -1559,16 +1510,6 @@ button {
   margin-top: 8px;
   font-size: 13px;
   color: var(--muted);
-}
-
-.usdt-pay .usdt-address-label {
-  font-size: 13px;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
-.usdt-address-label strong {
-  color: var(--gold);
 }
 
 /* ---------- Comentários ---------- */

@@ -51,7 +51,7 @@ export default function TopSupporters({ supporters }) {
                 <span className="supporter-meta">
                   <span className="supporter-network">{s.networkLabel}</span>
                   <span className="supporter-amount">
-                    {s.method === 'usdt' ? `${s.amount} USDT` : formatBRL(s.amount)}
+                    {formatBRL(s.amount)}
                   </span>
                 </span>
               </span>
