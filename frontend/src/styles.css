@@ -944,6 +944,21 @@ button {
   color: var(--text);
 }
 
+.footer-contact {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.footer-contact a {
+  color: var(--gold);
+  text-decoration: none;
+}
+
+.footer-contact a:hover {
+  text-decoration: underline;
+}
+
 /* ---------- Buttons ---------- */
 .btn {
   font-family: var(--font-disp);

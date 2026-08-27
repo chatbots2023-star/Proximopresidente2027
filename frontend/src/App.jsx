@@ -296,6 +296,9 @@ export default function App() {
             Projeto demonstrativo de votação por doações. Pagamentos processados de forma segura via{' '}
             <strong>Pepper</strong> (PIX). Nenhum voto oficial é emitido neste site.
           </p>
+          <p className="footer-contact">
+            Suporte: <a href="mailto:chatbots2023@gmail.com">chatbots2023@gmail.com</a>
+          </p>
         </div>
       </footer>
 
