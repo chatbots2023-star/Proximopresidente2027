@@ -247,7 +247,7 @@ app.get('/api/debug/pepper', async (req, res) => {
       webhook_url: 'https://proximopresidente2027br.netlify.app/api/webhook/pepper',
     };
     const p = await pepper('/transactions', { method: 'POST', body });
-    res.json({ status: r.status, data: r.data, postStatus: p.status, postData: p.data });
+    res.json({ status: r.status, data: r.data, postStatus: p.status, postData: p.data, errors: p.data?.errors || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
