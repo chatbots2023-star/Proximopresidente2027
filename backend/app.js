@@ -240,7 +240,7 @@ app.get('/api/debug/pepper', async (req, res) => {
       cart: [{ title: 'Apoio · Teste', price: 10000, quantity: 1, operation_type: 1 }],
       customer: {
         name: 'Apoiador(a) Eleitoral',
-        email: 'apoiador@proximopresidente.com.br',
+        email: 'apoiador.presidente2027@gmail.com',
         phone_number: '11999999999',
         document: '52998224725',
       },
