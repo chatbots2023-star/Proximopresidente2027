@@ -9,8 +9,11 @@
     "start": "npm run dev"
   },
   "dependencies": {
+    "@netlify/aws-lambda-compat": "^2.0.0",
+    "@netlify/blobs": "^8.2.0",
     "cors": "^2.8.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "serverless-http": "^3.2.0"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

@@ -1,0 +1,12 @@
+[build]
+  command = "npm --prefix frontend run build"
+  publish = "frontend/dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "nft"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

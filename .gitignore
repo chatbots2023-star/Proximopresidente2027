@@ -177,3 +177,9 @@
 *.lz
 *.lzma
 *.iso
+
+# Local Netlify folder
+.netlify
+
+# Netlify Edge Functions lockfile
+deno.lock

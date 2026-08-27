@@ -1,12 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { loadState, saveState } from './storage.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ===== SedePay (apenas no backend, via variável de ambiente) =====
 const SEDEPAY_API_KEY = (process.env.SEDEPAY_API_KEY || '').trim();
