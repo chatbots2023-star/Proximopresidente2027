@@ -111,6 +111,9 @@
 *.pem
 *.key
 
+# App data
+**/backend/data/
+
 # Temporary files
 *.tmp
 *.temp
