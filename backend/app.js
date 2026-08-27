@@ -236,6 +236,7 @@ app.get('/api/debug/pepper', async (req, res) => {
       api_token: PEPPER_API_TOKEN,
       amount: 10000,
       payment_method: 'pix',
+      installments: 1,
       cart: [{ title: 'Apoio · Teste', price: 10000, quantity: 1, operation_type: 1 }],
       customer: {
         name: 'Apoiador(a) Eleitoral',
