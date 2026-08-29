@@ -1,53 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api.js';
-import { getCandidate, formatBRL, formatCompact } from './candidates.js';
+import { getCandidate } from './candidates.js';
 import CanvasBackground from './components/CanvasBackground.jsx';
 import Confetti from './components/Confetti.jsx';
 import CandidateAvatar from './components/CandidateAvatar.jsx';
 import UrnaEletronica from './components/UrnaEletronica.jsx';
-import CheckoutModal from './components/CheckoutModal.jsx';
+import PromoteModal from './components/PromoteModal.jsx';
 import Comments from './components/Comments.jsx';
 import TopSupporters from './components/TopSupporters.jsx';
-
-function useAnimatedNumber(target) {
-  const [display, setDisplay] = useState(target || 0);
-  useEffect(() => {
-    const from = display;
-    const to = target || 0;
-    const diff = to - from;
-    if (diff === 0) return;
-    const dur = 700;
-    const start = performance.now();
-    let raf;
-    const tick = (now) => {
-      const t = Math.min(1, (now - start) / dur);
-      const eased = 1 - Math.pow(1 - t, 3);
-      setDisplay(Math.round(from + diff * eased));
-      if (t < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target]);
-  return display;
-}
-
-function Ticker({ items }) {
-  const line = items.map((d) => {
-    const c = getCandidate(d.candidateId);
-    const val = formatBRL(d.amount);
-    return `${d.name} apoiou ${c ? c.short : 'um candidato'} com ${val}`;
-  });
-  if (!line.length) line.push('Seja a primeira pessoa a apoiar um candidato');
-  const content = line.join('   •   ');
-  return (
-    <div className="ticker">
-      <div className="ticker-track">
-        <span>{content}</span>
-        <span aria-hidden="true">{content}</span>
-      </div>
-    </div>
-  );
-}
 
 const POSITION_META = {
   0: { label: '1º LUGAR', cls: 'pos-gold', medal: 'OURO' },
@@ -57,9 +17,8 @@ const POSITION_META = {
 
 export default function App() {
   const [data, setData] = useState(null);
-  const [selectedId, setSelectedId] = useState(null);
-  const [amount, setAmount] = useState('');
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [digits, setDigits] = useState('');
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const [celebration, setCelebration] = useState(null);
   const [confetti, setConfetti] = useState(0);
   const [toast, setToast] = useState(null);
@@ -88,54 +47,49 @@ export default function App() {
     if (!data) return [];
     return data.candidates.map((c) => ({ ...(getCandidate(c.id) || {}), ...c }));
   }, [data]);
-  const selected = getCandidate(selectedId);
-  const maxTotal = useMemo(() => (candidates.length ? Math.max(...candidates.map((c) => c.total), 1) : 1), [candidates]);
-  const animatedRaised = useAnimatedNumber(data?.totalRaised || 0);
 
-  const processConfirm = useCallback(
-    (res) => {
-      if (!res || !res.ok) {
-        showToast(res?.error || 'Não foi possível confirmar o pagamento.');
-        return;
-      }
-      if (res.state) setData(res.state);
-      if (res.already) {
-        showToast('Este pagamento já foi registrado.');
-        return;
-      }
-      setConfetti((n) => n + 1);
-      setCelebration(res);
-    },
-    [showToast]
-  );
+  const matchedCandidate = useMemo(() => {
+    if (!digits) return null;
+    return candidates.find((c) => c.number === digits) || null;
+  }, [digits, candidates]);
 
-  const selectCandidate = useCallback((id) => {
-    setSelectedId(id);
-    setAmount('');
-    if (urnaRef.current && window.innerWidth < 1024) {
-      urnaRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }, []);
+  const mode = data?.mode || 'mock';
 
   const onDigit = useCallback((d) => {
-    setAmount((prev) => {
+    setDigits((prev) => {
       const next = (prev || '') + d;
-      if (next.length > 5) return prev;
-      if (parseInt(next, 10) > 10000) return prev;
+      if (next.length > 2) return prev;
       return next;
     });
   }, []);
 
-  const onBackspace = useCallback(() => setAmount((p) => (p || '').slice(0, -1)), []);
-  const onCorrige = useCallback(() => setAmount(''), []);
+  const onBackspace = useCallback(() => setDigits((p) => (p || '').slice(0, -1)), []);
+  const onCorrige = useCallback(() => setDigits(''), []);
 
-  const onConfirm = useCallback(() => {
-    const value = parseInt(amount, 10);
-    if (!selected || !value || value < 10) return;
-    setCheckoutOpen(true);
-  }, [amount, selected]);
+  const onConfirm = useCallback(async () => {
+    if (!matchedCandidate) return;
+    try {
+      const r = await api.vote({ candidateId: matchedCandidate.id });
+      if (r.already) {
+        showToast(r.message || 'Agradecemos pelo seu voto, Obrigado!');
+        return;
+      }
+      if (r.state) setData(r.state);
+      setDigits('');
+      setConfetti((n) => n + 1);
+      setCelebration(r.vote);
+    } catch (e) {
+      showToast(e.message);
+    }
+  }, [matchedCandidate, showToast]);
 
-  const mode = data?.mode || 'mock';
+  const handlePromotePaid = useCallback(
+    (res) => {
+      if (res?.state) setData(res.state);
+      setConfetti((n) => n + 1);
+    },
+    []
+  );
 
   return (
     <div className="app">
@@ -152,8 +106,8 @@ export default function App() {
             <span className="live-badge">
               <span className="live-dot" /> AO VIVO
             </span>
-            <span className={`mode-badge ${mode === 'pepper' ? 'stripe' : 'demo'}`}>
-              {mode === 'pepper' ? 'Pepper · PIX' : 'Modo demonstração'}
+            <span className={`mode-badge ${mode === 'asaas' ? 'stripe' : 'demo'}`}>
+              {mode === 'asaas' ? 'Asaas · PIX' : 'Modo demonstração'}
             </span>
           </div>
         </div>
@@ -170,13 +124,13 @@ export default function App() {
             Brasil, escolha o seu <span className="grad">Presidente</span>
           </h1>
           <p className="hero-sub">
-            Eleição digital 100% justa e democratizada. Doe o valor que quiser ao seu candidato e veja o ranking subir ao
-            vivo.
+            Eleição digital 100% justa e democratizada. Voto grátis (1 por pessoa) e divulgação do seu link paga via
+            PIX.
           </p>
           <div className="hero-stats">
             <div className="stat-card">
-              <span className="stat-label">Arrecadado</span>
-              <span className="stat-value">{formatBRL(animatedRaised)}</span>
+              <span className="stat-label">Votos</span>
+              <span className="stat-value">{data?.totalVotes ?? 0}</span>
             </div>
             <div className="stat-card">
               <span className="stat-label">Apoiadores</span>
@@ -189,8 +143,6 @@ export default function App() {
           </div>
         </section>
 
-        <Ticker items={data?.recent || []} />
-
         <section className="play-area">
           <div className="ranking-col">
             <div className="panel-title">
@@ -201,13 +153,12 @@ export default function App() {
             <div className="ranking-list">
               {candidates.map((c, i) => {
                 const meta = POSITION_META[i];
-                const pct = (c.total / maxTotal) * 100;
-                const isSel = c.id === selectedId;
+                const isSel = c.id === matchedCandidate?.id;
                 return (
                   <button
                     key={c.id}
                     className={`rank-row ${meta ? meta.cls : ''} ${isSel ? 'selected' : ''}`}
-                    onClick={() => selectCandidate(c.id)}
+                    onClick={() => setDigits(c.number)}
                   >
                     <span className={`rank-pos ${i === 0 ? 'top1' : ''}`}>{i + 1}</span>
                     {i === 0 && <span className="crown" title="Top 1">♛</span>}
@@ -218,13 +169,13 @@ export default function App() {
                       <span className="rank-name">{c.short}</span>
                       <span className="rank-party">{c.party}</span>
                       <span className="rank-bar">
-                        <span className="rank-bar-fill" style={{ width: `${Math.max(pct, c.total ? 2 : 0)}%`, background: c.color }} />
+                        <span className="rank-bar-fill" style={{ width: `${Math.max(c.pct, c.votes ? 2 : 0)}%`, background: c.color }} />
                       </span>
                     </span>
                     <span className="rank-total">
-                      <span className="rank-total-value">{formatBRL(c.total)}</span>
+                      <span className="rank-total-value">{String(c.pct).replace('.', ',')}%</span>
                       <span className="rank-total-support">
-                        {c.supporters} {c.supporters === 1 ? 'apoio' : 'apoios'}
+                        {c.votes} {c.votes === 1 ? 'voto' : 'votos'}
                       </span>
                     </span>
                   </button>
@@ -240,8 +191,8 @@ export default function App() {
               <span className="panel-title-line" />
             </div>
             <UrnaEletronica
-              candidate={selected}
-              amount={amount}
+              candidate={matchedCandidate}
+              digits={digits}
               onDigit={onDigit}
               onBackspace={onBackspace}
               onCorrige={onCorrige}
@@ -250,13 +201,18 @@ export default function App() {
             />
             <div className="urna-legend">
               <span><b>1</b> Escolha seu candidato</span>
-              <span><b>2</b> Digite o valor R$</span>
-              <span><b>3</b> Aperte ENTER</span>
-              <span><b>4</b> Pague com PIX</span>
+              <span><b>2</b> Digite o número</span>
+              <span><b>3</b> Aperte CONFIRMA</span>
+              <span><b>4</b> Pronto, voto registrado!</span>
             </div>
           </div>
 
-          <TopSupporters supporters={data?.topSupporters || []} />
+          <div className="supporters-col">
+            <TopSupporters supporters={data?.topSupporters || []} />
+            <button className="promote-button" onClick={() => setPromoteOpen(true)}>
+              Divulgue seu link aqui
+            </button>
+          </div>
         </section>
 
         <section className="candidates-section">
@@ -269,8 +225,8 @@ export default function App() {
             {candidates.map((c, i) => (
               <button
                 key={c.id}
-                className={`candidate-card ${c.id === selectedId ? 'selected' : ''}`}
-                onClick={() => selectCandidate(c.id)}
+                className={`candidate-card ${c.id === matchedCandidate?.id ? 'selected' : ''}`}
+                onClick={() => setDigits(c.number)}
               >
                 {i === 0 && <span className="card-crown">♛ TOP 1</span>}
                 <span className="card-number" style={{ color: c.color }}>{c.number}</span>
@@ -279,8 +235,8 @@ export default function App() {
                 </span>
                 <span className="card-name">{c.short}</span>
                 <span className="card-party" style={{ background: c.color }}>{c.party}</span>
-                <span className="card-total">{formatBRL(c.total)}</span>
-                <span className="card-action">APOIAR AGORA</span>
+                <span className="card-total">{String(c.pct).replace('.', ',')}%</span>
+                <span className="card-action">VOTAR AGORA</span>
               </button>
             ))}
           </div>
@@ -293,8 +249,8 @@ export default function App() {
         <div className="footer-inner">
           <p className="footer-title">Próximo Presidente · Eleição justa e democratizada · Brasil 2027</p>
           <p className="footer-sub">
-            Projeto demonstrativo de votação por doações. Pagamentos processados de forma segura via{' '}
-            <strong>Pepper</strong> (PIX). Nenhum voto oficial é emitido neste site.
+            Projeto demonstrativo de votação digital. Divulgações pagas processadas de forma segura via{' '}
+            <strong>Asaas</strong> (PIX). Nenhum voto oficial é emitido neste site.
           </p>
           <p className="footer-contact">
             Suporte: <a href="mailto:chatbots2023@gmail.com">chatbots2023@gmail.com</a>
@@ -302,40 +258,19 @@ export default function App() {
         </div>
       </footer>
 
-      {checkoutOpen && selected && (
-        <CheckoutModal
-          candidate={selected}
-          amount={parseInt(amount, 10) || 0}
-          siteMode={mode}
-          onPaid={processConfirm}
-          onClose={() => setCheckoutOpen(false)}
-        />
-      )}
+      {promoteOpen && <PromoteModal siteMode={mode} onPaid={handlePromotePaid} onClose={() => setPromoteOpen(false)} />}
 
       {celebration && (
         <div className="celebration" onClick={() => setCelebration(null)}>
           <div className="celebration-card">
-            <div className="celebration-badge">PARABÉNS</div>
+            <div className="celebration-badge">VOTO CONFIRMADO</div>
             <div className="celebration-avatar">
-              <CandidateAvatar candidate={getCandidate(celebration.donation?.candidateId)} size={120} ring />
+              <CandidateAvatar candidate={getCandidate(celebration.candidateId)} size={120} ring />
             </div>
             <div className="celebration-name">
-              {getCandidate(celebration.donation?.candidateId)?.short || 'Seu candidato'}
+              {getCandidate(celebration.candidateId)?.short || 'Seu candidato'}
             </div>
-            <div className="celebration-amount">
-              Doação de {formatBRL(celebration.donation?.amount || 0)} confirmada
-            </div>
-            {celebration.isTop1 ? (
-              <div className="celebration-top1">TOP 1 DO RANKING</div>
-            ) : celebration.promoted ? (
-              <div className="celebration-move">
-                Seu candidato subiu do <b>#{celebration.from}</b> para o <b>#{celebration.to}</b>
-              </div>
-            ) : (
-              <div className="celebration-move">
-                Seu candidato está na posição <b>#{celebration.to}</b> do ranking
-              </div>
-            )}
+            <div className="celebration-amount">Seu voto foi registrado com sucesso!</div>
             <button className="btn btn-primary" onClick={() => setCelebration(null)}>
               Continuar
             </button>
