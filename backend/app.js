@@ -3,12 +3,16 @@ import cors from 'cors';
 import crypto from 'node:crypto';
 import { loadState, saveState } from './storage.js';
 
-// ===== Pepper (apenas no backend, via variável de ambiente) =====
-const PEPPER_API_TOKEN = (process.env.PEPPER_API_TOKEN || '').trim();
-const PEPPER_BASE = 'https://api.cloud.pepperpay.com.br/public/v1';
-const HAS_KEY = Boolean(PEPPER_API_TOKEN);
-const MODE = HAS_KEY ? 'pepper' : 'mock';
+// ===== Asaas (sandbox) — apenas no backend, via variável de ambiente =====
+const ASAAS_API_TOKEN = (process.env.ASAAS_API_TOKEN || '').trim();
+const ASAAS_WALLET_ID = (process.env.ASAAS_WALLET_ID || '').trim();
+const ASAAS_BASE = (process.env.ASAAS_BASE_URL || 'https://api-sandbox.asaas.com/v3').replace(/\/+$/, '');
+const HAS_KEY = Boolean(ASAAS_API_TOKEN) && Boolean(ASAAS_WALLET_ID);
+const MODE = HAS_KEY ? 'asaas' : 'mock';
 const WEBHOOK_READY = HAS_KEY;
+
+const ASAAS_GENERIC_CPF = '52998224725';
+const ASAAS_GENERIC_EMAIL = 'apoiador@proximopresidente.com.br';
 
 const MIN_DONATION = 10;
 const MAX_DONATION = 10000;
@@ -61,7 +65,7 @@ const CANDIDATES = [
 ];
 
 function emptyState() {
-  return { donations: [], charges: {}, comments: [] };
+  return { donations: [], charges: {}, comments: [], votes: [], promotions: [], asaasCustomerId: null };
 }
 
 let state = await loadState();

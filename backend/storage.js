@@ -26,7 +26,7 @@ const DATA_DIR = path.join(CURRENT_DIR, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 
 function emptyState() {
-  return { donations: [], charges: {}, comments: [] };
+  return { donations: [], charges: {}, comments: [], votes: [], promotions: [], asaasCustomerId: null };
 }
 
 export async function loadState() {
