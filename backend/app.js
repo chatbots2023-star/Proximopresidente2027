@@ -117,6 +117,51 @@ function newReference() {
   return 'br' + crypto.randomBytes(10).toString('hex');
 }
 
+async function asaas(pathname, options = {}) {
+  const res = await fetch(ASAAS_BASE + pathname, {
+    method: options.method || 'GET',
+    headers: {
+      access_token: ASAAS_API_TOKEN,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: AbortSignal.timeout(25000),
+  });
+  const text = await res.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text.slice(0, 200) };
+  }
+  return { status: res.status, data };
+}
+
+async function ensureAsaasCustomer() {
+  if (state.asaasCustomerId) return state.asaasCustomerId;
+  const list = await asaas(`/customers?cpfCnpj=${ASAAS_GENERIC_CPF}`);
+  if (list.status === 200 && Array.isArray(list.data?.data) && list.data.data.length) {
+    state.asaasCustomerId = list.data.data[0].id;
+    await saveState(state);
+    return state.asaasCustomerId;
+  }
+  const created = await asaas('/customers', {
+    method: 'POST',
+    body: {
+      name: 'Apoiador(a) Eleitoral',
+      cpfCnpj: ASAAS_GENERIC_CPF,
+      email: ASAAS_GENERIC_EMAIL,
+    },
+  });
+  if (created.status !== 200 || !created.data?.id) {
+    throw new Error('Falha ao criar cliente no Asaas.');
+  }
+  state.asaasCustomerId = created.data.id;
+  await saveState(state);
+  return state.asaasCustomerId;
+}
+
 function isPaidStatus(status) {
   return status === 'PAID';
 }
@@ -148,11 +193,111 @@ app.options('*', (req, res) => res.status(200).end());
 
 app.use(cors());
 
+// Webhook do Asaas — registrado ANTES do express.json()
+app.get('/api/webhook/asaas', (req, res) => res.status(200).json({ ok: true }));
+
+app.post('/api/webhook/asaas', express.json({ type: () => true }), async (req, res) => {
+  const event = req.body || {};
+  const paymentId = event?.payment?.id;
+  const eventType = event?.event;
+  if (!paymentId) return res.status(200).json({ ok: true, ignored: true, reason: 'sem payment.id' });
+  const charge = Object.values(state.charges).find((c) => c.asaasId === paymentId);
+  if (!charge) return res.status(200).json({ ok: true, ignored: true });
+  if (eventType === 'PAYMENT_RECEIVED' || eventType === 'PAYMENT_CONFIRMED') {
+    charge.status = 'PAID';
+    await saveState(state);
+    if (charge.type === 'promotion') await recordPromotion(charge);
+  }
+  return res.status(200).json({ ok: true });
+});
+
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true, mode: MODE, webhookConfigured: WEBHOOK_READY }));
 
 app.get('/api/state', (req, res) => res.json(computeState()));
+
+// ===== divulgação paga (PIX via Asaas) =====
+app.post('/api/promote', async (req, res) => {
+  const { name, network, handle, amount } = req.body || {};
+  const cleanName = String(name || '').trim().slice(0, 40);
+  const cleanNetwork = String(network || '').trim().toLowerCase();
+  const cleanHandle = String(handle || '').trim().slice(0, 120);
+  const value = Number(amount);
+
+  if (!cleanName) return res.status(400).json({ error: 'Informe um nome para divulgar.' });
+  if (!SOCIAL_NETWORKS.includes(cleanNetwork)) return res.status(400).json({ error: 'Rede social inválida.' });
+  if (!cleanHandle) return res.status(400).json({ error: 'Informe seu usuário ou o link do perfil.' });
+  if (!Number.isFinite(value) || value < MIN_DONATION || value > MAX_DONATION) {
+    return res.status(422).json({ error: `Divulgação de R$ ${MIN_DONATION},00 a R$ ${MAX_DONATION},00.` });
+  }
+
+  try {
+    // ---- modo demonstração ----
+    if (MODE !== 'asaas') {
+      const reference = newReference();
+      const charge = {
+        reference,
+        type: 'promotion',
+        method: 'pix',
+        amount: value,
+        status: 'PENDING',
+        mock: true,
+        ts: Date.now(),
+        social: { name: cleanName, network: cleanNetwork, handle: cleanHandle },
+      };
+      charge.qrCodeText = `00020126580014BR.GOV.BCB.PIX0136${reference.toUpperCase()}52040000530398654${String(value.toFixed(2)).replace('.', '')}5802BR5913SIMULACAO6009DEMO2027622507DEMO0016304A01`;
+      state.charges[reference] = charge;
+      await saveState(state);
+      return res.json({ mode: 'mock', ...charge });
+    }
+
+    // ---- modo real (Asaas sandbox) ----
+    const customerId = await ensureAsaasCustomer();
+    const reference = newReference();
+    const dueDate = new Date().toISOString().slice(0, 10);
+    const body = {
+      customer: customerId,
+      billingType: 'PIX',
+      value,
+      dueDate,
+      description: `Divulgação · ${cleanName}`,
+      externalReference: reference,
+      split: [{ walletId: ASAAS_WALLET_ID, percentualValue: 100 }],
+    };
+
+    const p = await asaas('/payments', { method: 'POST', body });
+    if (p.status !== 200) {
+      const msg = p.data?.errors?.[0]?.description || p.data?.message || 'Asaas não aceitou a cobrança.';
+      return res.status(502).json({ error: msg });
+    }
+    const paymentId = p.data.id;
+
+    const q = await asaas(`/payments/${paymentId}/pixQrCode`);
+    const payload = q.data?.payload || null;
+    if (q.status !== 200 || !payload) {
+      return res.status(502).json({ error: 'Não foi possível gerar o QR Code PIX.' });
+    }
+
+    const charge = {
+      reference,
+      asaasId: paymentId,
+      type: 'promotion',
+      method: 'pix',
+      amount: value,
+      status: 'PENDING',
+      qrCodeText: payload,
+      social: { name: cleanName, network: cleanNetwork, handle: cleanHandle },
+      ts: Date.now(),
+    };
+    state.charges[reference] = charge;
+    await saveState(state);
+    return res.json({ mode: 'asaas', ...charge });
+  } catch (err) {
+    console.error('promote error:', err.message);
+    return res.status(500).json({ error: 'Falha ao gerar o PIX. Tente novamente.' });
+  }
+});
 
 // ===== voto único por IP =====
 function clientIp(req) {
