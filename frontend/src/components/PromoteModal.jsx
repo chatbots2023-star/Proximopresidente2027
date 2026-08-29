@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import QRCode from 'qrcode';
 import { loadStripe } from '@stripe/stripe-js';
 import { formatBRL } from '../candidates.js';
 import { api } from '../api.js';
@@ -16,7 +15,6 @@ const SOCIAL_OPTIONS = [
 ];
 
 const METHOD_OPTIONS = [
-  ['pix', 'PIX', 'QR Code e copia e cola'],
   ['usdt', 'USDT (TRC20)', 'Rede TRON'],
   ['credit_card', 'Cartão de Crédito', 'Visa, Master etc.'],
 ];
@@ -48,8 +46,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
   const stripeReady = isStripe && Boolean(publishableKey);
 
   const [form, setForm] = useState({ name: '', network: 'instagram', handle: '', amount: '' });
-  const [method, setMethod] = useState('pix');
-  const [payer, setPayer] = useState({ email: '', cpf: '' });
+  const [method, setMethod] = useState('credit_card');
   const [card, setCard] = useState({ holderName: '', number: '', expiry: '', ccv: '' });
   const [holder, setHolder] = useState({ email: '', cpfCnpj: '', postalCode: '', addressNumber: '', phone: '' });
   const [phase, setPhase] = useState('form');
@@ -59,17 +56,11 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
   const [copied, setCopied] = useState(null);
   const [error, setError] = useState(null);
   const [paidResult, setPaidResult] = useState(null);
-  const qrRef = useRef(null);
   const cardMountRef = useRef(null);
   const cardElRef = useRef(null);
 
   const countdownSeconds = isStripe ? 600 : 60;
   const { seconds, expired, setExpired } = useCountdown(phase === 'payment', countdownSeconds);
-
-  useEffect(() => {
-    if (phase !== 'payment' || !charge?.qrCodeText || !qrRef.current) return;
-    QRCode.toCanvas(qrRef.current, charge.qrCodeText, { width: 216, margin: 1, errorCorrectionLevel: 'M' }).catch(() => {});
-  }, [phase, charge]);
 
   const getStripe = useCallback(async () => {
     if (!publishableKey) return null;
@@ -106,7 +97,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
   }, [phase, isStripe, stripeReady, getStripe]);
 
   useEffect(() => {
-    const isChargedMethod = charge?.method === 'pix' || charge?.method === 'credit_card';
+    const isChargedMethod = charge?.method === 'credit_card';
     if (phase !== 'payment' || expired || !isStripe || !charge || !isChargedMethod) return;
     let alive = true;
     const poll = async () => {
@@ -132,10 +123,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
 
   const value = Number(form.amount);
   const baseValid = form.name.trim() && form.handle.trim() && Number.isFinite(value) && value >= 10;
-  const payerValid =
-    !isStripe ||
-    method !== 'pix' ||
-    (payer.email.trim().includes('@') && payer.cpf.replace(/\D/g, '').length >= 11);
   const cardValid =
     card.holderName.trim() &&
     card.number.replace(/\D/g, '').length >= 13 &&
@@ -174,45 +161,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
 
       if (method === 'usdt') {
         setPhase('usdt');
-        return;
-      }
-
-      if (isStripe && method === 'pix') {
-        const stripe = await getStripe();
-        if (!stripe) {
-          setError('A chave pública do Stripe ainda não foi configurada. Aviso o administrador do site.');
-          return;
-        }
-        const { error: confirmErr, paymentIntent } = await stripe.confirmPixPayment(
-          ch.clientSecret,
-          {
-            payment_method: {
-              billing_details: {
-                name: form.name.trim(),
-                email: payer.email.trim(),
-                tax_id: payer.cpf.replace(/\D/g, ''),
-              },
-            },
-            return_url: window.location.href,
-          },
-          { handleActions: false }
-        );
-        if (confirmErr) {
-          setError(confirmErr.message || 'Não foi possível gerar o QR Code PIX.');
-          return;
-        }
-        const pixAction = paymentIntent?.next_action?.pix_display_qr_code || {};
-        if (pixAction.data) {
-          ch.qrCodeText = pixAction.data;
-          ch.pixImageUrl = pixAction.image_url_png || null;
-          ch.hostedInstructionsUrl = pixAction.hosted_instructions_url || null;
-          setCharge({ ...ch });
-        } else {
-          setError('PIX não ativado na conta Stripe. Ative em Dashboard > Payments e tente novamente.');
-          return;
-        }
-        setStatusText('Aguardando pagamento…');
-        setPhase('payment');
         return;
       }
 
@@ -434,31 +382,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
               ))}
             </div>
 
-            {isStripe && method === 'pix' && (
-              <div className="holder-section">
-                <div className="method-label">Dados do pagador (PIX)</div>
-                <div className="card-row">
-                  <label className="field">
-                    <span>E-mail</span>
-                    <input
-                      type="email"
-                      value={payer.email}
-                      onChange={(e) => setPayer({ ...payer, email: e.target.value })}
-                      placeholder="voce@email.com"
-                    />
-                  </label>
-                  <label className="field">
-                    <span>CPF</span>
-                    <input
-                      value={payer.cpf}
-                      onChange={(e) => setPayer({ ...payer, cpf: e.target.value })}
-                      placeholder="000.000.000-00"
-                    />
-                  </label>
-                </div>
-              </div>
-            )}
-
             {isStripe && !publishableKey && (
               <div className="form-error">
                 A chave pública do Stripe (pk_live) ainda não foi configurada. O administrador precisa adicioná-la
@@ -470,7 +393,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
             <button
               className="btn btn-primary btn-block"
               onClick={startPayment}
-              disabled={!baseValid || !payerValid || creating}
+              disabled={!baseValid || creating}
             >
               {creating ? 'Gerando…' : method === 'credit_card' && isStripe ? 'Continuar para o cartão' : 'Gerar pagamento e divulgar'}
             </button>
@@ -638,48 +561,14 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
               </div>
             ) : (
               <>
-                {charge.method === 'pix' ? (
-                  <div className="pix-pay">
-                    {charge.pixImageUrl && !charge.qrCodeText ? (
-                      <img src={charge.pixImageUrl} alt="QR Code PIX" className="qr-img" />
-                    ) : (
-                      <div className="qr-box">
-                        <canvas ref={qrRef} className="qr-canvas" />
-                      </div>
-                    )}
-                    <div className="copy-row">
-                      <input
-                        readOnly
-                        value={charge.qrCodeText || ''}
-                        className="copy-input"
-                        onFocus={(e) => e.target.select()}
-                      />
-                      <button className="copy-btn" onClick={() => copy(charge.qrCodeText, 'code')}>
-                        {copied === 'code' ? 'Copiado!' : 'Copiar'}
-                      </button>
-                    </div>
-                    {charge.hostedInstructionsUrl && (
-                      <a
-                        className="pix-instructions"
-                        href={charge.hostedInstructionsUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Abrir instruções de pagamento ↗
-                      </a>
-                    )}
-                    <div className="pay-amount">Valor: {formatBRL(charge.amount)}</div>
+                <div className="usdt-box">
+                  <div className="usdt-title">Cartão de Crédito</div>
+                  <div className="usdt-amount">Valor: {formatBRL(charge.amount)}</div>
+                  <div className="usdt-note">
+                    Pagamento processado pelo Stripe. Assim que o cartão for aprovado, seu link entra no Top
+                    Apoiadores.
                   </div>
-                ) : (
-                  <div className="usdt-box">
-                    <div className="usdt-title">Cartão de Crédito</div>
-                    <div className="usdt-amount">Valor: {formatBRL(charge.amount)}</div>
-                    <div className="usdt-note">
-                      Pagamento processado pelo Stripe. Assim que o cartão for aprovado, seu link entra no Top
-                      Apoiadores.
-                    </div>
-                  </div>
-                )}
+                </div>
 
                 <div className="pay-status">
                   <span className="status-dot" />

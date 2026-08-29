@@ -16,7 +16,7 @@ const USDT_NETWORK = 'TRON (TRC20)';
 const MIN_DONATION = 10;
 const MAX_DONATION = 10000;
 
-const PAYMENT_METHODS = ['pix', 'usdt', 'credit_card'];
+const PAYMENT_METHODS = ['usdt', 'credit_card'];
 const SOCIAL_NETWORKS = ['instagram', 'youtube', 'linkedin', 'facebook', 'tiktok', 'kwai', 'x', 'site'];
 const SOCIAL_BASE_URLS = {
   instagram: 'https://instagram.com/',
@@ -258,7 +258,7 @@ app.post('/api/promote', async (req, res) => {
       return res.json({ mode: MODE, ...charge });
     }
 
-    // ---- modo demonstração (PIX/Cartão simulados) ----
+    // ---- modo demonstração (Cartão simulado) ----
     if (MODE !== 'stripe') {
       const reference = newReference();
       const charge = {
@@ -271,9 +271,6 @@ app.post('/api/promote', async (req, res) => {
         ts: Date.now(),
         social,
       };
-      if (cleanMethod === 'pix') {
-        charge.qrCodeText = `00020126580014BR.GOV.BCB.PIX0136${reference.toUpperCase()}52040000530398654${String(value.toFixed(2)).replace('.', '')}5802BR5913SIMULACAO6009DEMO2027622507DEMO0016304A01`;
-      }
       state.charges[reference] = charge;
       await saveState(state);
       return res.json({ mode: 'mock', ...charge });
@@ -286,7 +283,7 @@ app.post('/api/promote', async (req, res) => {
       body: {
         amount: Math.round(value * 100),
         currency: 'brl',
-        payment_method_types: [cleanMethod === 'credit_card' ? 'card' : 'pix'],
+        payment_method_types: ['card'],
         metadata: { reference },
         description: `Divulgação · ${cleanName}`,
       },
