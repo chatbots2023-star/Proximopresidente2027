@@ -14,10 +14,14 @@ const WEBHOOK_READY = HAS_KEY;
 const ASAAS_GENERIC_CPF = '52998224725';
 const ASAAS_GENERIC_EMAIL = 'apoiador@proximopresidente.com.br';
 
+const USDT_WALLET_ADDRESS = (process.env.USDT_WALLET_ADDRESS || '').trim() || 'TKrHKch9gjZwmcmLF3CiAgNVHh2i9mrx5L';
+const USDT_NETWORK = 'TRON (TRC20)';
+
 const MIN_DONATION = 10;
 const MAX_DONATION = 10000;
 
-const SOCIAL_NETWORKS = ['instagram', 'youtube', 'linkedin', 'facebook', 'tiktok', 'kwai', 'x'];
+const PAYMENT_METHODS = ['pix', 'usdt', 'credit_card'];
+const SOCIAL_NETWORKS = ['instagram', 'youtube', 'linkedin', 'facebook', 'tiktok', 'kwai', 'x', 'site'];
 const SOCIAL_BASE_URLS = {
   instagram: 'https://instagram.com/',
   youtube: 'https://youtube.com/',
@@ -26,6 +30,7 @@ const SOCIAL_BASE_URLS = {
   tiktok: 'https://tiktok.com/',
   kwai: 'https://www.kwai.com/',
   x: 'https://x.com/',
+  site: 'https://',
 };
 const SOCIAL_LABELS = {
   instagram: 'Instagram',
@@ -35,6 +40,7 @@ const SOCIAL_LABELS = {
   tiktok: 'TikTok',
   kwai: 'Kwai',
   x: 'X',
+  site: 'Site ou Blogger',
 };
 const SOCIAL_NEEDS_AT = ['youtube', 'tiktok', 'kwai'];
 
@@ -217,36 +223,67 @@ app.get('/api/health', (req, res) => res.json({ ok: true, mode: MODE, webhookCon
 
 app.get('/api/state', (req, res) => res.json(computeState()));
 
-// ===== divulgação paga (PIX via Asaas) =====
+// ===== divulgação paga (PIX via Asaas / USDT TRC20 / Cartão via Asaas) =====
+function cleanCardStr(v, max) {
+  return String(v || '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
 app.post('/api/promote', async (req, res) => {
-  const { name, network, handle, amount } = req.body || {};
+  const { name, network, handle, amount, method, card, cardHolder } = req.body || {};
   const cleanName = String(name || '').trim().slice(0, 40);
   const cleanNetwork = String(network || '').trim().toLowerCase();
   const cleanHandle = String(handle || '').trim().slice(0, 120);
   const value = Number(amount);
+  const cleanMethod = String(method || 'pix').trim().toLowerCase();
 
   if (!cleanName) return res.status(400).json({ error: 'Informe um nome para divulgar.' });
   if (!SOCIAL_NETWORKS.includes(cleanNetwork)) return res.status(400).json({ error: 'Rede social inválida.' });
   if (!cleanHandle) return res.status(400).json({ error: 'Informe seu usuário ou o link do perfil.' });
+  if (!PAYMENT_METHODS.includes(cleanMethod)) return res.status(400).json({ error: 'Forma de pagamento inválida.' });
   if (!Number.isFinite(value) || value < MIN_DONATION || value > MAX_DONATION) {
     return res.status(422).json({ error: `Divulgação de R$ ${MIN_DONATION},00 a R$ ${MAX_DONATION},00.` });
   }
 
+  const social = { name: cleanName, network: cleanNetwork, handle: cleanHandle };
+
   try {
-    // ---- modo demonstração ----
+    // ---- USDT (TRC20) — pagamento manual, sempre disponível ----
+    if (cleanMethod === 'usdt') {
+      const reference = newReference();
+      const charge = {
+        reference,
+        type: 'promotion',
+        method: 'usdt',
+        amount: value,
+        status: 'PENDING',
+        manual: true,
+        usdtAddress: USDT_WALLET_ADDRESS,
+        usdtNetwork: USDT_NETWORK,
+        mock: MODE !== 'asaas',
+        ts: Date.now(),
+        social,
+      };
+      state.charges[reference] = charge;
+      await saveState(state);
+      return res.json({ mode: MODE, ...charge });
+    }
+
+    // ---- modo demonstração (PIX/Cartão simulados) ----
     if (MODE !== 'asaas') {
       const reference = newReference();
       const charge = {
         reference,
         type: 'promotion',
-        method: 'pix',
+        method: cleanMethod,
         amount: value,
         status: 'PENDING',
         mock: true,
         ts: Date.now(),
-        social: { name: cleanName, network: cleanNetwork, handle: cleanHandle },
+        social,
       };
-      charge.qrCodeText = `00020126580014BR.GOV.BCB.PIX0136${reference.toUpperCase()}52040000530398654${String(value.toFixed(2)).replace('.', '')}5802BR5913SIMULACAO6009DEMO2027622507DEMO0016304A01`;
+      if (cleanMethod === 'pix') {
+        charge.qrCodeText = `00020126580014BR.GOV.BCB.PIX0136${reference.toUpperCase()}52040000530398654${String(value.toFixed(2)).replace('.', '')}5802BR5913SIMULACAO6009DEMO2027622507DEMO0016304A01`;
+      }
       state.charges[reference] = charge;
       await saveState(state);
       return res.json({ mode: 'mock', ...charge });
@@ -256,15 +293,50 @@ app.post('/api/promote', async (req, res) => {
     const customerId = await ensureAsaasCustomer();
     const reference = newReference();
     const dueDate = new Date().toISOString().slice(0, 10);
+    const billingType = cleanMethod === 'credit_card' ? 'CREDIT_CARD' : 'PIX';
     const body = {
       customer: customerId,
-      billingType: 'PIX',
+      billingType,
       value,
       dueDate,
       description: `Divulgação · ${cleanName}`,
       externalReference: reference,
       split: [{ walletId: ASAAS_WALLET_ID, percentualValue: 100 }],
     };
+
+    if (cleanMethod === 'credit_card') {
+      const cc = card || {};
+      const holder = cardHolder || {};
+      const holderName = cleanCardStr(cc.holderName, 70);
+      const number = String(cc.number || '').replace(/\D/g, '').slice(0, 16);
+      const expiryMonth = String(cc.expiryMonth || '').replace(/\D/g, '').slice(0, 2);
+      const expiryYear = String(cc.expiryYear || '').replace(/\D/g, '').slice(0, 4);
+      const ccv = String(cc.ccv || '').replace(/\D/g, '').slice(0, 4);
+
+      const cpfCnpj = String(holder.cpfCnpj || '').replace(/\D/g, '').slice(0, 14);
+      const postalCode = String(holder.postalCode || '').replace(/\D/g, '').slice(0, 8);
+      const addressNumber = String(holder.addressNumber || '').replace(/\D/g, '').slice(0, 10);
+      const phone = String(holder.phone || '').replace(/\D/g, '').slice(0, 11);
+      const hName = cleanCardStr(holder.name, 70) || holderName;
+      const hEmail = cleanCardStr(holder.email, 100);
+
+      if (!holderName || !number || !expiryMonth || !expiryYear || !ccv) {
+        return res.status(422).json({ error: 'Preencha os dados do cartão.' });
+      }
+      if (!cpfCnpj || !postalCode || !addressNumber || !phone || !hEmail) {
+        return res.status(422).json({ error: 'Preencha os dados do titular (CPF, CEP, número, telefone e e-mail).' });
+      }
+
+      body.creditCard = { holderName, number, expiryMonth, expiryYear, ccv };
+      body.creditCardHolderInfo = {
+        name: hName,
+        email: hEmail,
+        cpfCnpj,
+        postalCode,
+        addressNumber,
+        phone,
+      };
+    }
 
     const p = await asaas('/payments', { method: 'POST', body });
     if (p.status !== 200) {
@@ -273,29 +345,39 @@ app.post('/api/promote', async (req, res) => {
     }
     const paymentId = p.data.id;
 
-    const q = await asaas(`/payments/${paymentId}/pixQrCode`);
-    const payload = q.data?.payload || null;
-    if (q.status !== 200 || !payload) {
-      return res.status(502).json({ error: 'Não foi possível gerar o QR Code PIX.' });
-    }
+    const asaasStatus = String(p.data?.status || 'PENDING');
+    const initialStatus = asaasStatus === 'RECEIVED' || asaasStatus === 'CONFIRMED' ? 'PAID' : 'PENDING';
 
     const charge = {
       reference,
       asaasId: paymentId,
       type: 'promotion',
-      method: 'pix',
+      method: cleanMethod,
       amount: value,
-      status: 'PENDING',
-      qrCodeText: payload,
-      social: { name: cleanName, network: cleanNetwork, handle: cleanHandle },
+      status: initialStatus,
+      social,
       ts: Date.now(),
     };
+
+    if (cleanMethod === 'pix') {
+      const q = await asaas(`/payments/${paymentId}/pixQrCode`);
+      const payload = q.data?.payload || null;
+      if (q.status !== 200 || !payload) {
+        return res.status(502).json({ error: 'Não foi possível gerar o QR Code PIX.' });
+      }
+      charge.qrCodeText = payload;
+    }
+
     state.charges[reference] = charge;
     await saveState(state);
+    if (isPaidStatus(initialStatus) && charge.type === 'promotion') {
+      const recorded = await recordPromotion(charge);
+      return res.json({ mode: 'asaas', ...charge, ...recorded });
+    }
     return res.json({ mode: 'asaas', ...charge });
   } catch (err) {
     console.error('promote error:', err.message);
-    return res.status(500).json({ error: 'Falha ao gerar o PIX. Tente novamente.' });
+    return res.status(500).json({ error: 'Falha ao gerar a divulgação. Tente novamente.' });
   }
 });
 
@@ -365,6 +447,22 @@ app.post('/api/charge/:reference/simulate', async (req, res) => {
   const charge = state.charges[req.params.reference];
   if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
   charge.status = 'PAID';
+  await saveState(state);
+  if (charge.type === 'promotion') return res.json({ charge, ...(await recordPromotion(charge)) });
+  return res.json({ charge, state: computeState() });
+});
+
+// ===== confirmar pagamento manual (USDT) =====
+app.post('/api/charge/:reference/confirm', async (req, res) => {
+  const charge = state.charges[req.params.reference];
+  if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
+  if (isPaidStatus(charge.status)) {
+    if (charge.type === 'promotion') return res.json({ charge, ...(await recordPromotion(charge)) });
+    return res.json({ charge, state: computeState() });
+  }
+  if (!charge.manual) return res.status(403).json({ error: 'Esta cobrança não aceita confirmação manual.' });
+  charge.status = 'PAID';
+  charge.confirmedTs = Date.now();
   await saveState(state);
   if (charge.type === 'promotion') return res.json({ charge, ...(await recordPromotion(charge)) });
   return res.json({ charge, state: computeState() });

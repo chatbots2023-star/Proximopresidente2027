@@ -55,6 +55,7 @@ export default function TopSupporters({ supporters }) {
                   </span>
                 </span>
               </span>
+              <span className="supporter-cta" title="Visitar perfil">↗</span>
             </a>
           ))
         )}

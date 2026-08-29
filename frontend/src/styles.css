@@ -1944,3 +1944,125 @@ button {
   transform: translateY(-1px);
   box-shadow: 0 6px 18px rgba(27, 158, 75, 0.35);
 }
+
+/* ---------- Métodos de pagamento (PromoteModal) ---------- */
+.method-label {
+  margin: 14px 0 8px;
+  font-family: var(--font-disp);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.method-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.method-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.method-tab.active {
+  border-color: #1b9e4b;
+  background: rgba(27, 158, 75, 0.12);
+  color: #fff;
+}
+
+.method-name {
+  font-family: var(--font-disp);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.method-sub {
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.card-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* ---------- USDT (TRC20) ---------- */
+.usdt-box {
+  text-align: center;
+}
+
+.usdt-title {
+  font-family: var(--font-disp);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 1px;
+  color: var(--gold);
+}
+
+.usdt-amount {
+  margin-top: 8px;
+  font-family: var(--font-disp);
+  font-weight: 700;
+  font-size: 15px;
+  color: #fff;
+}
+
+.usdt-note {
+  margin: 12px auto 0;
+  max-width: 340px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ---------- CTA nos links dos apoiadores ---------- */
+.supporter-cta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #1b9e4b, #0e7c86);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow: 0 4px 12px rgba(27, 158, 75, 0.4);
+  animation: ctaPulse 2s ease-in-out infinite;
+}
+
+.supporter-cta:hover {
+  transform: scale(1.1);
+}
+
+@keyframes ctaPulse {
+  0%,
+  100% {
+    box-shadow: 0 4px 12px rgba(27, 158, 75, 0.4);
+  }
+  50% {
+    box-shadow: 0 4px 22px rgba(27, 158, 75, 0.85);
+  }
+}
+
+.supporter-row {
+  position: relative;
+}

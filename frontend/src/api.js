@@ -24,6 +24,8 @@ export const api = {
   chargeStatus: (reference) => request(`/api/charge/${reference}`),
   simulate: (reference) =>
     request(`/api/charge/${reference}/simulate`, { method: 'POST' }),
+  confirm: (reference) =>
+    request(`/api/charge/${reference}/confirm`, { method: 'POST' }),
   comments: () => request('/api/comments'),
   postComment: (body) =>
     request('/api/comments', {
