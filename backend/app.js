@@ -75,122 +75,68 @@ function getCandidate(id) {
 }
 
 function computeState() {
-  const totals = {};
+  const totalVotes = state.votes.length;
   const counts = {};
-  for (const d of state.donations) {
-    totals[d.candidateId] = (totals[d.candidateId] || 0) + d.amount;
-    counts[d.candidateId] = (counts[d.candidateId] || 0) + 1;
+  for (const v of state.votes) {
+    counts[v.candidateId] = (counts[v.candidateId] || 0) + 1;
   }
   const candidates = CANDIDATES.map((c) => ({
     ...c,
-    total: totals[c.id] || 0,
-    supporters: counts[c.id] || 0,
-  })).sort((a, b) => b.total - a.total || a.number.localeCompare(b.number));
+    votes: counts[c.id] || 0,
+    pct: totalVotes ? Math.round(((counts[c.id] || 0) / totalVotes) * 1000) / 10 : 0,
+  })).sort((a, b) => b.votes - a.votes || a.number.localeCompare(b.number));
 
-  const totalRaised = state.donations.reduce((s, d) => s + d.amount, 0);
-  const recent = state.donations
-    .slice(-12)
-    .reverse()
-    .map((d) => ({ id: d.id, candidateId: d.candidateId, amount: d.amount, method: d.method || 'pix', ts: d.ts, name: d.name || 'Apoiador(a)' }));
-
-  const topSupporters = state.donations
-    .filter((d) => d.network && d.profileUrl)
-    .slice(-20)
+  const topSupporters = state.promotions
+    .slice()
     .sort((a, b) => b.amount - a.amount)
-    .map((d) => ({
-      id: d.id,
-      name: d.name,
-      network: d.network,
-      networkLabel: SOCIAL_LABELS[d.network] || d.network,
-      handle: d.handle,
-      profileUrl: d.profileUrl,
-      amount: d.amount,
-      candidateId: d.candidateId,
-      method: d.method,
-      ts: d.ts,
+    .slice(0, 20)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      network: p.network,
+      networkLabel: SOCIAL_LABELS[p.network] || p.network,
+      handle: p.handle,
+      profileUrl: p.profileUrl,
+      amount: p.amount,
+      ts: p.ts,
     }));
 
-  return { mode: MODE, webhookConfigured: WEBHOOK_READY, totalRaised, totalSupporters: state.donations.length, candidates, recent, topSupporters };
+  return {
+    mode: MODE,
+    webhookConfigured: WEBHOOK_READY,
+    totalVotes,
+    totalSupporters: totalVotes,
+    candidates,
+    topSupporters,
+    recent: [],
+  };
 }
 
-// ===== helpers Pepper =====
+// ===== helpers =====
 function newReference() {
   return 'br' + crypto.randomBytes(10).toString('hex');
-}
-
-function siteUrl(req) {
-  const proto = req.get('x-forwarded-proto') || 'https';
-  const host = req.get('x-forwarded-host') || req.get('host') || 'localhost:3001';
-  return `${proto}://${host}`;
-}
-
-async function pepper(pathname, options = {}) {
-  const res = await fetch(PEPPER_BASE + pathname, {
-    method: options.method || 'GET',
-    headers: {
-      Authorization: `Bearer ${PEPPER_API_TOKEN}`,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    signal: AbortSignal.timeout(25000),
-  });
-  const text = await res.text();
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text.slice(0, 200) };
-  }
-  return { status: res.status, data };
-}
-
-function mapPepperStatus(status) {
-  switch (status) {
-    case 'paid':
-      return 'PAID';
-    case 'refunded':
-      return 'REFUNDED';
-    case 'refused':
-      return 'REFUSED';
-    case 'cancelled':
-      return 'CANCELED';
-    case 'chargeback':
-      return 'CHARGEBACK';
-    default:
-      return 'PENDING';
-  }
 }
 
 function isPaidStatus(status) {
   return status === 'PAID';
 }
 
-async function recordDonation(charge) {
-  if (state.donations.some((d) => d.id === charge.reference)) {
+async function recordPromotion(charge) {
+  if (state.promotions.some((p) => p.id === charge.reference)) {
     return { already: true, state: computeState() };
   }
-  const before = computeState();
-  state.donations.push({
+  const promotion = {
     id: charge.reference,
-    candidateId: charge.candidateId,
+    name: charge.social.name,
+    network: charge.social.network,
+    handle: charge.social.handle,
+    profileUrl: buildProfileUrl(charge.social.network, charge.social.handle),
     amount: charge.amount,
-    method: charge.method,
-    mode: MODE,
     ts: Date.now(),
-  });
-  await saveState(state);
-  const after = computeState();
-  const fromIdx = before.candidates.findIndex((c) => c.id === charge.candidateId);
-  const toIdx = after.candidates.findIndex((c) => c.id === charge.candidateId);
-  return {
-    donation: { reference: charge.reference, candidateId: charge.candidateId, amount: charge.amount, method: charge.method },
-    from: fromIdx + 1,
-    to: toIdx + 1,
-    promoted: toIdx < fromIdx,
-    isTop1: toIdx === 0,
-    state: after,
   };
+  state.promotions.push(promotion);
+  await saveState(state);
+  return { promotion, state: computeState() };
 }
 
 // ===== app =====
@@ -202,185 +148,65 @@ app.options('*', (req, res) => res.status(200).end());
 
 app.use(cors());
 
-// Webhook da Pepper (versão 2.0 do payload) — registrado ANTES do express.json()
-app.get('/api/webhook/pepper', (req, res) => res.status(200).json({ ok: true }));
-
-app.post('/api/webhook/pepper', express.json({ type: 'application/json' }), async (req, res) => {
-  const event = req.body || {};
-  const transactionId = event?.transaction?.id;
-  if (!transactionId) {
-    return res.status(200).json({ ok: true, ignored: true, reason: 'sem transaction.id' });
-  }
-
-  const charge = Object.values(state.charges).find(
-    (c) => c.pepperHash === transactionId || c.pepperTransactionId === transactionId
-  );
-  if (!charge) return res.status(200).json({ ok: true, ignored: true });
-
-  const status = mapPepperStatus(event?.status || event?.transaction?.status || charge.status);
-  if (status !== charge.status) {
-    charge.status = status;
-    await saveState(state);
-  }
-  if (isPaidStatus(status)) {
-    await recordDonation(charge);
-  }
-  return res.status(200).json({ ok: true });
-});
-
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true, mode: MODE, webhookConfigured: WEBHOOK_READY }));
 
-// Diagnóstico temporário — remove antes do deploy final
-app.get('/api/debug/pepper', async (req, res) => {
-  try {
-    const r = await pepper('/');
-    const body = {
-      api_token: PEPPER_API_TOKEN,
-      amount: 10000,
-      payment_method: 'pix',
-      installments: 1,
-      cart: [{ title: 'Apoio · Teste', price: 10000, quantity: 1, operation_type: 1 }],
-      customer: {
-        name: 'Apoiador(a) Eleitoral',
-        email: 'apoiador.presidente2027@gmail.com',
-        phone_number: '11999999999',
-        document: '52998224725',
-      },
-      webhook_url: 'https://proximopresidente2027br.netlify.app/api/webhook/pepper',
-    };
-    const p = await pepper('/transactions', { method: 'POST', body });
-    const prod = await pepper('/products?perPage=50');
-    res.json({ status: r.status, data: r.data, postStatus: p.status, postData: p.data, errors: p.data?.errors || null, products: prod.data });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 app.get('/api/state', (req, res) => res.json(computeState()));
 
-// ===== criar cobrança =====
-app.post('/api/checkout', async (req, res) => {
-  const { method, candidateId, amount } = req.body || {};
+// ===== voto único por IP =====
+function clientIp(req) {
+  return (
+    req.get('x-nf-client-connection-ip') ||
+    (req.get('x-forwarded-for') || '').split(',')[0].trim() ||
+    req.socket?.remoteAddress ||
+    'unknown'
+  );
+}
+
+app.post('/api/vote', async (req, res) => {
+  const { candidateId } = req.body || {};
   const candidate = getCandidate(candidateId);
-  const value = Number(amount);
-
   if (!candidate) return res.status(400).json({ error: 'Candidato inválido.' });
-  if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ error: 'Valor inválido.' });
-  if (value < MIN_DONATION || value > MAX_DONATION) {
-    return res.status(422).json({ error: `Doações de R$ ${MIN_DONATION},00 a R$ ${MAX_DONATION},00.` });
+
+  const ip = clientIp(req);
+  if (state.votes.some((v) => v.ip === ip)) {
+    return res.json({
+      ok: false,
+      already: true,
+      message: 'Agradecemos pelo seu voto, Obrigado!',
+      state: computeState(),
+    });
   }
-  if (method !== 'pix') return res.status(400).json({ error: 'Método de pagamento inválido.' });
-
-  try {
-    // ---- modo demonstração (sem token Pepper) ----
-    if (MODE !== 'pepper') {
-      const reference = newReference();
-      const charge = {
-        reference,
-        method: 'pix',
-        network: null,
-        candidateId,
-        amount: value,
-        status: 'PENDING',
-        mock: true,
-        ts: Date.now(),
-      };
-      charge.qrCodeText = `00020126580014BR.GOV.BCB.PIX0136${reference.toUpperCase()}52040000530398654${String(value.toFixed(2)).replace('.', '')}5802BR5913SIMULACAO6009DEMO2027622507DEMO0016304A01`;
-      state.charges[reference] = charge;
-      await saveState(state);
-      return res.json({ mode: 'mock', ...charge });
-    }
-
-    const reference = newReference();
-    const amountCents = Math.round(value * 100);
-    const body = {
-      api_token: PEPPER_API_TOKEN,
-      amount: amountCents,
-      payment_method: 'pix',
-      cart: [
-        {
-          title: `Apoio · ${candidate.name} (${candidate.party})`,
-          price: amountCents,
-          quantity: 1,
-          operation_type: 1,
-        },
-      ],
-      customer: {
-        name: 'Apoiador(a) Eleitoral',
-        email: 'apoiador@proximopresidente.com.br',
-        phone_number: '11999999999',
-        document: '52998224725',
-      },
-      webhook_url: `${siteUrl(req)}/api/webhook/pepper`,
-    };
-
-    const r = await pepper('/transactions', { method: 'POST', body });
-    if (r.status === 401 || r.status === 403) {
-      return res.status(500).json({ error: 'Token Pepper inválido ou sem permissão.' });
-    }
-    if (r.status === 400) {
-      const msg = r.data?.message || 'Dados inválidos para a Pepper.';
-      const detail = Array.isArray(r.data?.errors) ? ` ${r.data.errors.join('; ')}` : '';
-      return res.status(422).json({ error: msg + detail });
-    }
-    if (r.status === 429) {
-      return res.status(429).json({ error: 'Limite de requisições atingido. Aguarde um instante.' });
-    }
-    if (r.status !== 200) {
-      return res.status(502).json({ error: 'Pepper indisponível no momento. Tente novamente.' });
-    }
-
-    const charge = {
-      reference,
-      pepperHash: r.data?.hash || null,
-      pepperTransactionId: r.data?.transaction || null,
-      method: 'pix',
-      network: null,
-      candidateId,
-      amount: value,
-      status: mapPepperStatus(r.data?.payment_status),
-      qrCodeText: r.data?.pix?.pix_qr_code || null,
-      qrCodeUrl: r.data?.pix?.pix_url || null,
-      ts: Date.now(),
-    };
-    state.charges[reference] = charge;
-    await saveState(state);
-    return res.json({ mode: 'pepper', ...charge });
-  } catch (err) {
-    console.error('checkout error:', err.message);
-    return res.status(500).json({ error: 'Falha ao criar a cobrança. Tente novamente.' });
-  }
+  state.votes.push({ ip, candidateId, ts: Date.now() });
+  await saveState(state);
+  return res.json({ ok: true, already: false, vote: { candidateId }, state: computeState() });
 });
 
-// ===== consultar status =====
+// ===== consultar status (promoção PIX) =====
 app.get('/api/charge/:reference', async (req, res) => {
   const { reference } = req.params;
   const charge = state.charges[reference];
   if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
 
-  if (charge.mock) {
-    return res.json({ charge, state: computeState() });
-  }
+  if (charge.mock) return res.json({ charge, state: computeState() });
 
   if (isPaidStatus(charge.status)) {
-    return res.json({ charge, ...(await recordDonation(charge)) });
-  }
-
-  if (!charge.pepperHash) {
+    if (charge.type === 'promotion') return res.json({ charge, ...(await recordPromotion(charge)) });
     return res.json({ charge, state: computeState() });
   }
 
+  if (!charge.asaasId) return res.json({ charge, state: computeState() });
+
   try {
-    const q = await pepper(`/transactions/${charge.pepperHash}`);
-    const newStatus = mapPepperStatus(q.data?.payment_status || charge.status);
+    const q = await asaas(`/payments/${charge.asaasId}`);
+    const newStatus = q.data?.status === 'RECEIVED' || q.data?.status === 'CONFIRMED' ? 'PAID' : 'PENDING';
     if (newStatus !== charge.status) {
       charge.status = newStatus;
       await saveState(state);
     }
-    if (isPaidStatus(newStatus)) {
-      return res.json({ charge, ...(await recordDonation(charge)) });
+    if (isPaidStatus(newStatus) && charge.type === 'promotion') {
+      return res.json({ charge, ...(await recordPromotion(charge)) });
     }
     return res.json({ charge, state: computeState() });
   } catch (err) {
@@ -390,12 +216,13 @@ app.get('/api/charge/:reference', async (req, res) => {
 
 // ===== simular pagamento (somente em modo demonstração) =====
 app.post('/api/charge/:reference/simulate', async (req, res) => {
-  if (MODE === 'pepper') return res.status(403).json({ error: 'Simulação disponível apenas no modo demonstração.' });
+  if (MODE === 'asaas') return res.status(403).json({ error: 'Simulação disponível apenas no modo demonstração.' });
   const charge = state.charges[req.params.reference];
   if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
   charge.status = 'PAID';
   await saveState(state);
-  return res.json({ charge, ...(await recordDonation(charge)) });
+  if (charge.type === 'promotion') return res.json({ charge, ...(await recordPromotion(charge)) });
+  return res.json({ charge, state: computeState() });
 });
 
 // ===== comentários =====
@@ -420,29 +247,6 @@ app.post('/api/comments', async (req, res) => {
   state.comments.push(comment);
   await saveState(state);
   return res.status(201).json({ comment });
-});
-
-// ===== divulgar rede social de uma doação confirmada =====
-app.post('/api/donations/:reference/social', async (req, res) => {
-  const { reference } = req.params;
-  const donation = state.donations.find((d) => d.id === reference);
-  if (!donation) return res.status(404).json({ error: 'Doação não encontrada.' });
-
-  const { name, network, handle } = req.body || {};
-  const cleanName = String(name || '').trim().slice(0, 40);
-  const cleanNetwork = String(network || '').trim().toLowerCase();
-  const cleanHandle = String(handle || '').trim().slice(0, 120);
-  if (!cleanName) return res.status(400).json({ error: 'Informe um nome para divulgar.' });
-  if (!SOCIAL_NETWORKS.includes(cleanNetwork)) return res.status(400).json({ error: 'Rede social inválida.' });
-  if (!cleanHandle) return res.status(400).json({ error: 'Informe seu usuário ou o link do perfil.' });
-
-  donation.name = cleanName;
-  donation.network = cleanNetwork;
-  donation.handle = cleanHandle;
-  donation.profileUrl = buildProfileUrl(cleanNetwork, cleanHandle);
-  donation.socialTs = Date.now();
-  await saveState(state);
-  return res.json({ ok: true, donation });
 });
 
 export { app };
