@@ -28,9 +28,9 @@ export default function TopSupporters({ supporters }) {
       <div className="supporters-list">
         {supporters.length === 0 ? (
           <div className="supporters-empty">
-            Nenhum apoiador divulgado ainda.
+            Nenhum link divulgado ainda.
             <br />
-            Pague e divulgue seu perfil!
+            Divulgue seu link pagando via PIX!
           </div>
         ) : (
           supporters.map((s, i) => (
@@ -59,7 +59,7 @@ export default function TopSupporters({ supporters }) {
           ))
         )}
       </div>
-      <div className="supporters-note">Maior valor no topo · últimos 20 pagantes</div>
+      <div className="supporters-note">Maior valor no topo</div>
     </div>
   );
 }
