@@ -1,15 +1,8 @@
 import { useEffect } from 'react';
 import CandidateAvatar from './CandidateAvatar.jsx';
-import { formatBRL } from '../candidates.js';
 
-function groupThousands(digits) {
-  if (!digits) return '0';
-  return Number(digits).toLocaleString('pt-BR');
-}
-
-export default function UrnaEletronica({ candidate, amount, onDigit, onBackspace, onCorrige, onConfirm, processing }) {
-  const value = amount ? parseInt(amount, 10) : 0;
-  const canConfirm = !!candidate && value >= 10 && !processing;
+export default function UrnaEletronica({ candidate, digits, onDigit, onBackspace, onCorrige, onConfirm, processing }) {
+  const canConfirm = !!candidate && !processing;
 
   useEffect(() => {
     const handler = (e) => {
@@ -28,7 +21,7 @@ export default function UrnaEletronica({ candidate, amount, onDigit, onBackspace
     return () => window.removeEventListener('keydown', handler);
   }, [canConfirm, onDigit, onBackspace, onConfirm]);
 
-  const digits = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const digitsList = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
   return (
     <div className="urna">
@@ -54,25 +47,25 @@ export default function UrnaEletronica({ candidate, amount, onDigit, onBackspace
                   </div>
                 </div>
               </div>
-              <div className="screen-amount-label">DIGITE O VALOR R$</div>
-              <div className={`screen-amount ${value ? 'has-value' : ''}`}>
-                <span className="screen-currency">R$</span>
-                {amount ? (
-                  <span className="screen-amount-num">{groupThousands(amount)}</span>
+              <div className="screen-amount-label">VOCÊ CONFIRMA O SEU VOTO?</div>
+              <div className={`screen-amount ${digits ? 'has-value' : ''}`}>
+                {digits ? (
+                  <span className="screen-amount-num">{digits}</span>
                 ) : (
                   <span className="screen-cursor">▋</span>
                 )}
               </div>
-              {value >= 10 ? (
-                <div className="screen-hint ok">Aperte CONFIRMA para gerar o pagamento de {formatBRL(value)}</div>
-              ) : (
-                <div className="screen-hint">Digite o valor (R$ 10 a R$ 10.000) e aperte ENTER</div>
-              )}
+              <div className="screen-hint ok">Aperte CONFIRMA para votar em {candidate.short}</div>
             </>
+          ) : digits ? (
+            <div className="screen-empty">
+              <div className="screen-empty-title">NÚMERO INVÁLIDO</div>
+              <div className="screen-empty-sub">Digite o número de um candidato (2 dígitos)</div>
+            </div>
           ) : (
             <div className="screen-empty">
-              <div className="screen-empty-title">SELECIONE UM CANDIDATO</div>
-              <div className="screen-empty-sub">Clique em um candidato da lista ao lado para começar</div>
+              <div className="screen-empty-title">DIGITE O NÚMERO</div>
+              <div className="screen-empty-sub">Digite o número do candidato e aperte CONFIRMA</div>
             </div>
           )}
         </div>
@@ -80,7 +73,7 @@ export default function UrnaEletronica({ candidate, amount, onDigit, onBackspace
 
       <div className="urna-keypad">
         <div className="keypad-grid">
-          {digits.map((d) => (
+          {digitsList.map((d) => (
             <button key={d} className="key key-num" onClick={() => onDigit(String(d))}>
               {d}
             </button>
@@ -100,7 +93,8 @@ export default function UrnaEletronica({ candidate, amount, onDigit, onBackspace
           </button>
         </div>
         <div className="urna-foot">
-          <span className="urna-foot-hint">Valor R$ · aperte <kbd>ENTER</kbd> ou <kbd>CONFIRMA</kbd></span>        </div>
+          <span className="urna-foot-hint">Digite o número · aperte <kbd>ENTER</kbd> ou <kbd>CONFIRMA</kbd></span>
+        </div>
       </div>
     </div>
   );
