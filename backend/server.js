@@ -2,15 +2,14 @@ import { app } from './app.js';
 
 const PORT = process.env.PORT || 3001;
 
-const ASAAS_API_TOKEN = (process.env.ASAAS_API_TOKEN || '').trim();
-const ASAAS_WALLET_ID = (process.env.ASAAS_WALLET_ID || '').trim();
-const MODE = Boolean(ASAAS_API_TOKEN) && Boolean(ASAAS_WALLET_ID) ? 'asaas' : 'mock';
+const STRIPE_SECRET_KEY = (process.env.STRIPE_SECRET_KEY || '').trim();
+const MODE = Boolean(STRIPE_SECRET_KEY) ? 'stripe' : 'mock';
 
 app.listen(PORT, () => {
   console.log(`API Próximo Presidente rodando em http://localhost:${PORT} (modo: ${MODE})`);
-  if (MODE === 'asaas') {
-    console.log('Asaas conectado. Cobranças PIX (divulgação) serão geradas pelo Asaas sandbox.');
+  if (MODE === 'stripe') {
+    console.log('Stripe conectado. PIX e Cartão (divulgação) serão cobrados pela Stripe.');
   } else {
-    console.log('Sem token Asaas válido -> modo demonstração com PIX simulado.');
+    console.log('Sem chave Stripe -> modo demonstração com PIX simulado.');
   }
 });

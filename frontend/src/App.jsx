@@ -106,8 +106,8 @@ export default function App() {
             <span className="live-badge">
               <span className="live-dot" /> AO VIVO
             </span>
-            <span className={`mode-badge ${mode === 'asaas' ? 'stripe' : 'demo'}`}>
-              {mode === 'asaas' ? 'Asaas · PIX' : 'Modo demonstração'}
+            <span className={`mode-badge ${mode === 'stripe' ? 'stripe' : 'demo'}`}>
+              {mode === 'stripe' ? 'Stripe · PIX e Cartão' : 'Modo demonstração'}
             </span>
           </div>
         </div>
@@ -250,7 +250,7 @@ export default function App() {
           <p className="footer-title">Próximo Presidente · Eleição justa e democratizada · Brasil 2027</p>
           <p className="footer-sub">
             Projeto demonstrativo de votação digital. Divulgações pagas processadas de forma segura via{' '}
-            <strong>Asaas</strong> (PIX). Nenhum voto oficial é emitido neste site.
+            <strong>Stripe</strong> (PIX e Cartão). Nenhum voto oficial é emitido neste site.
           </p>
           <p className="footer-contact">
             Suporte: <a href="mailto:chatbots2023@gmail.com">chatbots2023@gmail.com</a>
@@ -258,7 +258,14 @@ export default function App() {
         </div>
       </footer>
 
-      {promoteOpen && <PromoteModal siteMode={mode} onPaid={handlePromotePaid} onClose={() => setPromoteOpen(false)} />}
+      {promoteOpen && (
+        <PromoteModal
+          siteMode={mode}
+          publishableKey={data?.publishableKey || null}
+          onPaid={handlePromotePaid}
+          onClose={() => setPromoteOpen(false)}
+        />
+      )}
 
       {celebration && (
         <div className="celebration" onClick={() => setCelebration(null)}>

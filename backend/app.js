@@ -3,16 +3,12 @@ import cors from 'cors';
 import crypto from 'node:crypto';
 import { loadState, saveState } from './storage.js';
 
-// ===== Asaas (sandbox) — apenas no backend, via variável de ambiente =====
-const ASAAS_API_TOKEN = (process.env.ASAAS_API_TOKEN || '').trim();
-const ASAAS_WALLET_ID = (process.env.ASAAS_WALLET_ID || '').trim();
-const ASAAS_BASE = (process.env.ASAAS_BASE_URL || 'https://api-sandbox.asaas.com/v3').replace(/\/+$/, '');
-const HAS_KEY = Boolean(ASAAS_API_TOKEN) && Boolean(ASAAS_WALLET_ID);
-const MODE = HAS_KEY ? 'asaas' : 'mock';
-const WEBHOOK_READY = HAS_KEY;
-
-const ASAAS_GENERIC_CPF = '52998224725';
-const ASAAS_GENERIC_EMAIL = 'apoiador@proximopresidente.com.br';
+// ===== Stripe (live) — apenas no backend, via variável de ambiente =====
+const STRIPE_SECRET_KEY = (process.env.STRIPE_SECRET_KEY || '').trim();
+const STRIPE_PUBLISHABLE_KEY = (process.env.STRIPE_PUBLISHABLE_KEY || '').trim();
+const HAS_KEY = Boolean(STRIPE_SECRET_KEY);
+const MODE = HAS_KEY ? 'stripe' : 'mock';
+const WEBHOOK_READY = false;
 
 const USDT_WALLET_ADDRESS = (process.env.USDT_WALLET_ADDRESS || '').trim() || 'TKrHKch9gjZwmcmLF3CiAgNVHh2i9mrx5L';
 const USDT_NETWORK = 'TRON (TRC20)';
@@ -71,7 +67,7 @@ const CANDIDATES = [
 ];
 
 function emptyState() {
-  return { donations: [], charges: {}, comments: [], votes: [], promotions: [], asaasCustomerId: null };
+  return { donations: [], charges: {}, comments: [], votes: [], promotions: [] };
 }
 
 let state = await loadState();
@@ -110,6 +106,7 @@ function computeState() {
   return {
     mode: MODE,
     webhookConfigured: WEBHOOK_READY,
+    publishableKey: STRIPE_PUBLISHABLE_KEY || null,
     totalVotes,
     totalSupporters: totalVotes,
     candidates,
@@ -123,15 +120,31 @@ function newReference() {
   return 'br' + crypto.randomBytes(10).toString('hex');
 }
 
-async function asaas(pathname, options = {}) {
-  const res = await fetch(ASAAS_BASE + pathname, {
+function encodeForm(obj, prefix = '') {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(obj || {})) {
+    const fullKey = prefix ? `${prefix}[${key}]` : key;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      encodeForm(value, fullKey).forEach((v, k) => params.append(k, v));
+    } else if (Array.isArray(value)) {
+      value.forEach((item) => params.append(`${fullKey}[]`, item));
+    } else if (value !== undefined && value !== null && value !== '') {
+      params.append(fullKey, value);
+    }
+  }
+  return params;
+}
+
+async function stripe(pathname, options = {}) {
+  const body = options.body ? encodeForm(options.body).toString() : undefined;
+  const res = await fetch('https://api.stripe.com/v1' + pathname, {
     method: options.method || 'GET',
     headers: {
-      access_token: ASAAS_API_TOKEN,
+      Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
       Accept: 'application/json',
-      'Content-Type': 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    body,
     signal: AbortSignal.timeout(25000),
   });
   const text = await res.text();
@@ -142,30 +155,6 @@ async function asaas(pathname, options = {}) {
     data = { raw: text.slice(0, 200) };
   }
   return { status: res.status, data };
-}
-
-async function ensureAsaasCustomer() {
-  if (state.asaasCustomerId) return state.asaasCustomerId;
-  const list = await asaas(`/customers?cpfCnpj=${ASAAS_GENERIC_CPF}`);
-  if (list.status === 200 && Array.isArray(list.data?.data) && list.data.data.length) {
-    state.asaasCustomerId = list.data.data[0].id;
-    await saveState(state);
-    return state.asaasCustomerId;
-  }
-  const created = await asaas('/customers', {
-    method: 'POST',
-    body: {
-      name: 'Apoiador(a) Eleitoral',
-      cpfCnpj: ASAAS_GENERIC_CPF,
-      email: ASAAS_GENERIC_EMAIL,
-    },
-  });
-  if (created.status !== 200 || !created.data?.id) {
-    throw new Error('Falha ao criar cliente no Asaas.');
-  }
-  state.asaasCustomerId = created.data.id;
-  await saveState(state);
-  return state.asaasCustomerId;
 }
 
 function isPaidStatus(status) {
@@ -199,37 +188,38 @@ app.options('*', (req, res) => res.status(200).end());
 
 app.use(cors());
 
-// Webhook do Asaas — registrado ANTES do express.json()
-app.get('/api/webhook/asaas', (req, res) => res.status(200).json({ ok: true }));
+// Webhook do Stripe — registrado ANTES do express.json()
+app.get('/api/webhook/stripe', (req, res) => res.status(200).json({ ok: true }));
 
-app.post('/api/webhook/asaas', express.json({ type: () => true }), async (req, res) => {
+app.post('/api/webhook/stripe', express.json({ type: () => true }), async (req, res) => {
   const event = req.body || {};
-  const paymentId = event?.payment?.id;
-  const eventType = event?.event;
-  if (!paymentId) return res.status(200).json({ ok: true, ignored: true, reason: 'sem payment.id' });
-  const charge = Object.values(state.charges).find((c) => c.asaasId === paymentId);
+  const intentId = event?.data?.object?.id;
+  const eventType = event?.type;
+  if (!intentId || eventType !== 'payment_intent.succeeded') return res.status(200).json({ ok: true, ignored: true });
+  const charge = Object.values(state.charges).find((c) => c.stripeIntentId === intentId);
   if (!charge) return res.status(200).json({ ok: true, ignored: true });
-  if (eventType === 'PAYMENT_RECEIVED' || eventType === 'PAYMENT_CONFIRMED') {
-    charge.status = 'PAID';
-    await saveState(state);
-    if (charge.type === 'promotion') await recordPromotion(charge);
-  }
+  charge.status = 'PAID';
+  await saveState(state);
+  if (charge.type === 'promotion') await recordPromotion(charge);
   return res.status(200).json({ ok: true });
 });
 
 app.use(express.json());
 
-app.get('/api/health', (req, res) => res.json({ ok: true, mode: MODE, webhookConfigured: WEBHOOK_READY }));
+app.get('/api/health', (req, res) =>
+  res.json({
+    ok: true,
+    mode: MODE,
+    webhookConfigured: WEBHOOK_READY,
+    publishableKey: STRIPE_PUBLISHABLE_KEY || null,
+  })
+);
 
 app.get('/api/state', (req, res) => res.json(computeState()));
 
-// ===== divulgação paga (PIX via Asaas / USDT TRC20 / Cartão via Asaas) =====
-function cleanCardStr(v, max) {
-  return String(v || '').replace(/\s+/g, ' ').trim().slice(0, max);
-}
-
+// ===== divulgação paga (PIX/Cartão via Stripe / USDT TRC20 manual) =====
 app.post('/api/promote', async (req, res) => {
-  const { name, network, handle, amount, method, card, cardHolder } = req.body || {};
+  const { name, network, handle, amount, method } = req.body || {};
   const cleanName = String(name || '').trim().slice(0, 40);
   const cleanNetwork = String(network || '').trim().toLowerCase();
   const cleanHandle = String(handle || '').trim().slice(0, 120);
@@ -259,7 +249,7 @@ app.post('/api/promote', async (req, res) => {
         manual: true,
         usdtAddress: USDT_WALLET_ADDRESS,
         usdtNetwork: USDT_NETWORK,
-        mock: MODE !== 'asaas',
+        mock: MODE !== 'stripe',
         ts: Date.now(),
         social,
       };
@@ -269,7 +259,7 @@ app.post('/api/promote', async (req, res) => {
     }
 
     // ---- modo demonstração (PIX/Cartão simulados) ----
-    if (MODE !== 'asaas') {
+    if (MODE !== 'stripe') {
       const reference = newReference();
       const charge = {
         reference,
@@ -289,92 +279,37 @@ app.post('/api/promote', async (req, res) => {
       return res.json({ mode: 'mock', ...charge });
     }
 
-    // ---- modo real (Asaas sandbox) ----
-    const customerId = await ensureAsaasCustomer();
+    // ---- modo real (Stripe) ----
     const reference = newReference();
-    const dueDate = new Date().toISOString().slice(0, 10);
-    const billingType = cleanMethod === 'credit_card' ? 'CREDIT_CARD' : 'PIX';
-    const body = {
-      customer: customerId,
-      billingType,
-      value,
-      dueDate,
-      description: `Divulgação · ${cleanName}`,
-      externalReference: reference,
-      split: [{ walletId: ASAAS_WALLET_ID, percentualValue: 100 }],
-    };
-
-    if (cleanMethod === 'credit_card') {
-      const cc = card || {};
-      const holder = cardHolder || {};
-      const holderName = cleanCardStr(cc.holderName, 70);
-      const number = String(cc.number || '').replace(/\D/g, '').slice(0, 16);
-      const expiryMonth = String(cc.expiryMonth || '').replace(/\D/g, '').slice(0, 2);
-      const expiryYear = String(cc.expiryYear || '').replace(/\D/g, '').slice(0, 4);
-      const ccv = String(cc.ccv || '').replace(/\D/g, '').slice(0, 4);
-
-      const cpfCnpj = String(holder.cpfCnpj || '').replace(/\D/g, '').slice(0, 14);
-      const postalCode = String(holder.postalCode || '').replace(/\D/g, '').slice(0, 8);
-      const addressNumber = String(holder.addressNumber || '').replace(/\D/g, '').slice(0, 10);
-      const phone = String(holder.phone || '').replace(/\D/g, '').slice(0, 11);
-      const hName = cleanCardStr(holder.name, 70) || holderName;
-      const hEmail = cleanCardStr(holder.email, 100);
-
-      if (!holderName || !number || !expiryMonth || !expiryYear || !ccv) {
-        return res.status(422).json({ error: 'Preencha os dados do cartão.' });
-      }
-      if (!cpfCnpj || !postalCode || !addressNumber || !phone || !hEmail) {
-        return res.status(422).json({ error: 'Preencha os dados do titular (CPF, CEP, número, telefone e e-mail).' });
-      }
-
-      body.creditCard = { holderName, number, expiryMonth, expiryYear, ccv };
-      body.creditCardHolderInfo = {
-        name: hName,
-        email: hEmail,
-        cpfCnpj,
-        postalCode,
-        addressNumber,
-        phone,
-      };
-    }
-
-    const p = await asaas('/payments', { method: 'POST', body });
+    const p = await stripe('/payment_intents', {
+      method: 'POST',
+      body: {
+        amount: Math.round(value * 100),
+        currency: 'brl',
+        payment_method_types: [cleanMethod === 'credit_card' ? 'card' : 'pix'],
+        metadata: { reference },
+        description: `Divulgação · ${cleanName}`,
+      },
+    });
     if (p.status !== 200) {
-      const msg = p.data?.errors?.[0]?.description || p.data?.message || 'Asaas não aceitou a cobrança.';
+      const msg = p.data?.error?.message || 'Stripe não aceitou a cobrança.';
       return res.status(502).json({ error: msg });
     }
-    const paymentId = p.data.id;
-
-    const asaasStatus = String(p.data?.status || 'PENDING');
-    const initialStatus = asaasStatus === 'RECEIVED' || asaasStatus === 'CONFIRMED' ? 'PAID' : 'PENDING';
 
     const charge = {
       reference,
-      asaasId: paymentId,
+      stripeIntentId: p.data.id,
       type: 'promotion',
       method: cleanMethod,
       amount: value,
-      status: initialStatus,
+      status: 'PENDING',
       social,
       ts: Date.now(),
     };
 
-    if (cleanMethod === 'pix') {
-      const q = await asaas(`/payments/${paymentId}/pixQrCode`);
-      const payload = q.data?.payload || null;
-      if (q.status !== 200 || !payload) {
-        return res.status(502).json({ error: 'Não foi possível gerar o QR Code PIX.' });
-      }
-      charge.qrCodeText = payload;
-    }
-
     state.charges[reference] = charge;
     await saveState(state);
-    if (isPaidStatus(initialStatus) && charge.type === 'promotion') {
-      const recorded = await recordPromotion(charge);
-      return res.json({ mode: 'asaas', ...charge, ...recorded });
-    }
-    return res.json({ mode: 'asaas', ...charge });
+    return res.json({ mode: 'stripe', clientSecret: p.data.client_secret, ...charge });
   } catch (err) {
     console.error('promote error:', err.message);
     return res.status(500).json({ error: 'Falha ao gerar a divulgação. Tente novamente.' });
@@ -410,7 +345,7 @@ app.post('/api/vote', async (req, res) => {
   return res.json({ ok: true, already: false, vote: { candidateId }, state: computeState() });
 });
 
-// ===== consultar status (promoção PIX) =====
+// ===== consultar status (promoção PIX/Cartão) =====
 app.get('/api/charge/:reference', async (req, res) => {
   const { reference } = req.params;
   const charge = state.charges[reference];
@@ -423,11 +358,11 @@ app.get('/api/charge/:reference', async (req, res) => {
     return res.json({ charge, state: computeState() });
   }
 
-  if (!charge.asaasId) return res.json({ charge, state: computeState() });
+  if (!charge.stripeIntentId) return res.json({ charge, state: computeState() });
 
   try {
-    const q = await asaas(`/payments/${charge.asaasId}`);
-    const newStatus = q.data?.status === 'RECEIVED' || q.data?.status === 'CONFIRMED' ? 'PAID' : 'PENDING';
+    const q = await stripe(`/payment_intents/${charge.stripeIntentId}`);
+    const newStatus = q.data?.status === 'succeeded' ? 'PAID' : 'PENDING';
     if (newStatus !== charge.status) {
       charge.status = newStatus;
       await saveState(state);
@@ -443,7 +378,7 @@ app.get('/api/charge/:reference', async (req, res) => {
 
 // ===== simular pagamento (somente em modo demonstração) =====
 app.post('/api/charge/:reference/simulate', async (req, res) => {
-  if (MODE === 'asaas') return res.status(403).json({ error: 'Simulação disponível apenas no modo demonstração.' });
+  if (MODE === 'stripe') return res.status(403).json({ error: 'Simulação disponível apenas no modo demonstração.' });
   const charge = state.charges[req.params.reference];
   if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
   charge.status = 'PAID';
