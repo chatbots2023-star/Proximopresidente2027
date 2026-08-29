@@ -9,8 +9,14 @@ async function request(url, options) {
 
 export const api = {
   state: () => request('/api/state'),
-  checkout: (body) =>
-    request('/api/checkout', {
+  vote: (body) =>
+    request('/api/vote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  promote: (body) =>
+    request('/api/promote', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -18,12 +24,6 @@ export const api = {
   chargeStatus: (reference) => request(`/api/charge/${reference}`),
   simulate: (reference) =>
     request(`/api/charge/${reference}/simulate`, { method: 'POST' }),
-  donationSocial: (reference, body) =>
-    request(`/api/donations/${reference}/social`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
   comments: () => request('/api/comments'),
   postComment: (body) =>
     request('/api/comments', {
