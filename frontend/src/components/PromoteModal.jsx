@@ -15,7 +15,6 @@ const SOCIAL_OPTIONS = [
 ];
 
 const METHOD_OPTIONS = [
-  ['usdt', 'USDT (TRC20)', 'Rede TRON'],
   ['credit_card', 'Cartão de Crédito', 'Visa, Master etc.'],
 ];
 
@@ -52,7 +51,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
   const [charge, setCharge] = useState(null);
   const [creating, setCreating] = useState(false);
   const [statusText, setStatusText] = useState('Aguardando pagamento…');
-  const [copied, setCopied] = useState(null);
   const [error, setError] = useState(null);
   const [paidResult, setPaidResult] = useState(null);
 
@@ -122,11 +120,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
         method,
       });
       setCharge(ch);
-
-      if (method === 'usdt') {
-        setPhase('usdt');
-        return;
-      }
 
       setStatusText('Aguardando pagamento…');
       setPhase('payment');
@@ -227,35 +220,10 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
     }
   }
 
-  async function confirmUsdt() {
-    if (!charge) return;
-    setStatusText('Confirmando envio…');
-    setCreating(true);
-    try {
-      const r = await api.confirm(charge.reference);
-      setPaidResult(r);
-      setPhase('done');
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setCreating(false);
-    }
-  }
-
   async function regenerate() {
     setCharge(null);
     setExpired(false);
     await startPayment();
-  }
-
-  async function copy(text, which) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(which);
-      setTimeout(() => setCopied(null), 1600);
-    } catch {
-      setCopied('error');
-    }
   }
 
   async function simulatePayment() {
@@ -498,32 +466,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
           </div>
         )}
 
-        {phase === 'usdt' && charge && (
-          <div className="pay-box">
-            <div className="usdt-box">
-              <div className="usdt-title">USDT · TRON (TRC20)</div>
-              <div className="usdt-amount">Valor: {formatBRL(charge.amount)}</div>
-              <div className="usdt-note">
-                Envie o valor equivalente via USDT para o endereço abaixo usando a rede <strong>TRON (TRC20)</strong>.
-                Após enviar, clique em "Já enviei o pagamento" para publicar seu link.
-              </div>
-              <div className="copy-row">
-                <input readOnly value={charge.usdtAddress || ''} className="copy-input" onFocus={(e) => e.target.select()} />
-                <button className="copy-btn" onClick={() => copy(charge.usdtAddress, 'usdt')}>
-                  {copied === 'usdt' ? 'Copiado!' : 'Copiar'}
-                </button>
-              </div>
-            </div>
-            {error && <div className="form-error">{error}</div>}
-            <button className="btn btn-primary btn-block" onClick={confirmUsdt} disabled={creating}>
-              {creating ? 'Confirmando…' : 'Já enviei o pagamento (USDT)'}
-            </button>
-            <button className="btn btn-ghost btn-block" onClick={backToForm} disabled={creating}>
-              Voltar
-            </button>
-          </div>
-        )}
-
         {phase === 'payment' && charge && (
           <div className="pay-box">
             {expired ? (
@@ -536,10 +478,10 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
               </div>
             ) : (
               <>
-                <div className="usdt-box">
-                  <div className="usdt-title">Cartão de Crédito</div>
-                  <div className="usdt-amount">Valor: {formatBRL(charge.amount)}</div>
-                  <div className="usdt-note">
+                <div className="pay-box-inner">
+                  <div className="pay-box-title">Cartão de Crédito</div>
+                  <div className="pay-box-amount">Valor: {formatBRL(charge.amount)}</div>
+                  <div className="pay-box-note">
                     Pagamento processado pelo Stripe. Assim que o cartão for aprovado, seu link entra no Top
                     Apoiadores.
                   </div>

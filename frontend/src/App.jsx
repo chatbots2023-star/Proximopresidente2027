@@ -125,7 +125,7 @@ export default function App() {
           </h1>
           <p className="hero-sub">
             Eleição digital 100% justa e democratizada. Voto grátis (1 por pessoa) e divulgação do seu link paga via
-            cartão ou USDT.
+            cartão.
           </p>
           <div className="hero-stats">
             <div className="stat-card">

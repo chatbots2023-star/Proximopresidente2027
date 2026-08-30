@@ -30,7 +30,7 @@ export default function TopSupporters({ supporters }) {
           <div className="supporters-empty">
             Nenhum link divulgado ainda.
             <br />
-            Divulgue seu link pagando via Cartão ou USDT!
+            Divulgue seu link pagando via Cartão!
           </div>
         ) : (
           supporters.map((s, i) => (

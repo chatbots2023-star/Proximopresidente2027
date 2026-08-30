@@ -2112,12 +2112,12 @@ button {
   gap: 10px;
 }
 
-/* ---------- USDT (TRC20) ---------- */
-.usdt-box {
+/* ---------- Caixa de status do pagamento ---------- */
+.pay-box-inner {
   text-align: center;
 }
 
-.usdt-title {
+.pay-box-title {
   font-family: var(--font-disp);
   font-weight: 700;
   font-size: 15px;
@@ -2125,7 +2125,7 @@ button {
   color: var(--gold);
 }
 
-.usdt-amount {
+.pay-box-amount {
   margin-top: 8px;
   font-family: var(--font-disp);
   font-weight: 700;
@@ -2133,7 +2133,7 @@ button {
   color: #fff;
 }
 
-.usdt-note {
+.pay-box-note {
   margin: 12px auto 0;
   max-width: 340px;
   font-size: 12.5px;

@@ -10,13 +10,10 @@ const HAS_KEY = Boolean(STRIPE_SECRET_KEY);
 const MODE = HAS_KEY ? 'stripe' : 'mock';
 const WEBHOOK_READY = false;
 
-const USDT_WALLET_ADDRESS = (process.env.USDT_WALLET_ADDRESS || '').trim() || 'TKrHKch9gjZwmcmLF3CiAgNVHh2i9mrx5L';
-const USDT_NETWORK = 'TRON (TRC20)';
-
 const MIN_DONATION = 10;
 const MAX_DONATION = 10000;
 
-const PAYMENT_METHODS = ['usdt', 'credit_card'];
+const PAYMENT_METHODS = ['credit_card'];
 const SOCIAL_NETWORKS = ['instagram', 'youtube', 'linkedin', 'facebook', 'tiktok', 'kwai', 'x', 'site'];
 const SOCIAL_BASE_URLS = {
   instagram: 'https://instagram.com/',
@@ -217,7 +214,7 @@ app.get('/api/health', (req, res) =>
 
 app.get('/api/state', (req, res) => res.json(computeState()));
 
-// ===== divulgação paga (PIX/Cartão via Stripe / USDT TRC20 manual) =====
+// ===== divulgação paga (Cartão via Stripe) =====
 app.post('/api/promote', async (req, res) => {
   const { name, network, handle, amount, method } = req.body || {};
   const cleanName = String(name || '').trim().slice(0, 40);
@@ -237,27 +234,6 @@ app.post('/api/promote', async (req, res) => {
   const social = { name: cleanName, network: cleanNetwork, handle: cleanHandle };
 
   try {
-    // ---- USDT (TRC20) — pagamento manual, sempre disponível ----
-    if (cleanMethod === 'usdt') {
-      const reference = newReference();
-      const charge = {
-        reference,
-        type: 'promotion',
-        method: 'usdt',
-        amount: value,
-        status: 'PENDING',
-        manual: true,
-        usdtAddress: USDT_WALLET_ADDRESS,
-        usdtNetwork: USDT_NETWORK,
-        mock: MODE !== 'stripe',
-        ts: Date.now(),
-        social,
-      };
-      state.charges[reference] = charge;
-      await saveState(state);
-      return res.json({ mode: MODE, ...charge });
-    }
-
     // ---- modo demonstração (Cartão simulado) ----
     if (MODE !== 'stripe') {
       const reference = newReference();
@@ -379,22 +355,6 @@ app.post('/api/charge/:reference/simulate', async (req, res) => {
   const charge = state.charges[req.params.reference];
   if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
   charge.status = 'PAID';
-  await saveState(state);
-  if (charge.type === 'promotion') return res.json({ charge, ...(await recordPromotion(charge)) });
-  return res.json({ charge, state: computeState() });
-});
-
-// ===== confirmar pagamento manual (USDT) =====
-app.post('/api/charge/:reference/confirm', async (req, res) => {
-  const charge = state.charges[req.params.reference];
-  if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
-  if (isPaidStatus(charge.status)) {
-    if (charge.type === 'promotion') return res.json({ charge, ...(await recordPromotion(charge)) });
-    return res.json({ charge, state: computeState() });
-  }
-  if (!charge.manual) return res.status(403).json({ error: 'Esta cobrança não aceita confirmação manual.' });
-  charge.status = 'PAID';
-  charge.confirmedTs = Date.now();
   await saveState(state);
   if (charge.type === 'promotion') return res.json({ charge, ...(await recordPromotion(charge)) });
   return res.json({ charge, state: computeState() });
