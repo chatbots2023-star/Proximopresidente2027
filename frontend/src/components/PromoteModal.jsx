@@ -302,7 +302,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
                 <button
                   type="button"
                   className="step-btn"
-                  onClick={() => setForm({ ...form, amount: Math.max(10, value - 10) })}
+                  onClick={() => setForm({ ...form, amount: Math.max(10, Math.round((value - 0.1) * 100) / 100) })}
                   disabled={value <= 10}
                   aria-label="Diminuir valor"
                 >
@@ -337,7 +337,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
                 <button
                   type="button"
                   className="step-btn"
-                  onClick={() => setForm({ ...form, amount: Math.min(10000, value + 10) })}
+                  onClick={() => setForm({ ...form, amount: Math.min(10000, Math.round((value + 0.1) * 100) / 100) })}
                   disabled={value >= 10000}
                   aria-label="Aumentar valor"
                 >
