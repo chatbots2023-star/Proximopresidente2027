@@ -1171,6 +1171,31 @@ button {
   text-shadow: 0 0 10px rgba(57, 255, 20, 0.5);
 }
 
+.amount-stepper .step-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #39ff14;
+  font-size: 20px;
+  font-weight: 800;
+  font-family: var(--font-body);
+  text-align: center;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.amount-stepper .step-input:focus {
+  border-color: var(--green);
+}
+
+.amount-stepper .step-input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

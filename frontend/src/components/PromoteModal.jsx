@@ -48,7 +48,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
   const [form, setForm] = useState({ name: '', network: 'instagram', handle: '', amount: 10 });
   const [method, setMethod] = useState('credit_card');
   const [card, setCard] = useState({ holderName: '', number: '', expiry: '', ccv: '' });
-  const [holder, setHolder] = useState({ email: '', cpfCnpj: '', postalCode: '', addressNumber: '', phone: '' });
   const [phase, setPhase] = useState('form');
   const [charge, setCharge] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -123,16 +122,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
 
   const value = Number(form.amount);
   const baseValid = form.name.trim() && form.handle.trim() && Number.isFinite(value) && value >= 10;
-  const cardValid =
-    card.holderName.trim() &&
-    card.number.replace(/\D/g, '').length >= 13 &&
-    card.expiry.trim() &&
-    card.ccv.trim() &&
-    holder.email.trim() &&
-    holder.cpfCnpj.replace(/\D/g, '').length >= 11 &&
-    holder.postalCode.replace(/\D/g, '').length === 8 &&
-    holder.addressNumber.trim() &&
-    holder.phone.replace(/\D/g, '').length >= 10;
+  const cardValid = card.holderName.trim();
 
   function parseExpiry(exp) {
     const m = String(exp || '').match(/^\s*(\d{1,2})\s*[\/\-\s]\s*(\d{2,4})\s*$/);
@@ -196,13 +186,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
             card: cardElRef.current,
             billing_details: {
               name: form.name.trim(),
-              email: holder.email.trim(),
-              tax_id: holder.cpfCnpj.replace(/\D/g, ''),
-              phone: holder.phone.replace(/\D/g, ''),
-              address: {
-                postal_code: holder.postalCode.replace(/\D/g, ''),
-                country: 'BR',
-              },
             },
           },
         });
@@ -367,7 +350,25 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
                 >
                   −
                 </button>
-                <span className="step-value">{formatBRL(value)}</span>
+                <input
+                  className="step-input"
+                  type="number"
+                  min={10}
+                  max={10000}
+                  step={10}
+                  value={form.amount}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === '') {
+                      setForm({ ...form, amount: '' });
+                      return;
+                    }
+                    const n = Number(raw);
+                    if (!Number.isFinite(n)) return;
+                    setForm({ ...form, amount: Math.min(10000, Math.max(0, n)) });
+                  }}
+                  aria-label="Valor da divulgação em reais"
+                />
                 <button
                   type="button"
                   className="step-btn"
@@ -431,52 +432,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
               />
             </label>
 
-            <div className="method-label">Dados do titular</div>
-            <div className="card-row">
-              <label className="field">
-                <span>CPF</span>
-                <input
-                  value={holder.cpfCnpj}
-                  onChange={(e) => setHolder({ ...holder, cpfCnpj: e.target.value })}
-                  placeholder="000.000.000-00"
-                />
-              </label>
-              <label className="field">
-                <span>CEP</span>
-                <input
-                  value={holder.postalCode}
-                  onChange={(e) => setHolder({ ...holder, postalCode: e.target.value })}
-                  placeholder="00000-000"
-                />
-              </label>
-            </div>
-            <div className="card-row">
-              <label className="field">
-                <span>Nº do endereço</span>
-                <input
-                  value={holder.addressNumber}
-                  onChange={(e) => setHolder({ ...holder, addressNumber: e.target.value })}
-                  placeholder="123"
-                />
-              </label>
-              <label className="field">
-                <span>Telefone (com DDD)</span>
-                <input
-                  value={holder.phone}
-                  onChange={(e) => setHolder({ ...holder, phone: e.target.value })}
-                  placeholder="(11) 99999-9999"
-                />
-              </label>
-            </div>
-            <label className="field">
-              <span>E-mail do titular</span>
-              <input
-                type="email"
-                value={holder.email}
-                onChange={(e) => setHolder({ ...holder, email: e.target.value })}
-                placeholder="voce@email.com"
-              />
-            </label>
             {error && <div className="form-error">{error}</div>}
             <button className="btn btn-primary btn-block" onClick={payWithCard} disabled={!cardValid || creating}>
               {creating ? 'Processando…' : `Pagar ${formatBRL(value)} no cartão`}
