@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { formatBRL } from '../candidates.js';
 import { api } from '../api.js';
@@ -55,8 +55,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
   const [copied, setCopied] = useState(null);
   const [error, setError] = useState(null);
   const [paidResult, setPaidResult] = useState(null);
-  const cardMountRef = useRef(null);
-  const cardElRef = useRef(null);
 
   const countdownSeconds = isStripe ? 600 : 60;
   const { seconds, expired, setExpired } = useCountdown(phase === 'payment', countdownSeconds);
@@ -65,35 +63,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
     if (!publishableKey) return null;
     return loadStripe(publishableKey);
   }, [publishableKey]);
-
-  // Monta o elemento de cartão (Stripe Elements) quando necessário
-  useEffect(() => {
-    if (phase !== 'card' || !isStripe || !stripeReady) return;
-    let cancelled = false;
-    (async () => {
-      const stripe = await getStripe();
-      if (!stripe || cancelled) return;
-      const elements = stripe.elements({ locale: 'pt-BR' });
-      const el = elements.create('card', {
-        style: {
-          base: { fontSize: '15px', color: '#e6edf3', '::placeholder': { color: '#8b949e' } },
-          invalid: { color: '#f85149' },
-        },
-      });
-      cardElRef.current = el;
-      el.mount(cardMountRef.current);
-    })();
-    return () => {
-      cancelled = true;
-      try {
-        cardElRef.current?.unmount();
-        cardElRef.current?.destroy();
-      } catch {
-        /* noop */
-      }
-      cardElRef.current = null;
-    };
-  }, [phase, isStripe, stripeReady, getStripe]);
 
   useEffect(() => {
     const isChargedMethod = charge?.method === 'credit_card';
@@ -122,7 +91,12 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
 
   const value = Number(form.amount);
   const baseValid = form.name.trim() && form.handle.trim() && Number.isFinite(value) && value >= 10;
-  const cardValid = card.holderName.trim();
+  const expiryParsed = parseExpiry(card.expiry);
+  const cardValid =
+    card.holderName.trim() &&
+    card.number.replace(/\D/g, '').length >= 13 &&
+    Boolean(expiryParsed) &&
+    card.ccv.replace(/\D/g, '').length >= 3;
 
   function parseExpiry(exp) {
     const m = String(exp || '').match(/^\s*(\d{1,2})\s*[\/\-\s]\s*(\d{2,4})\s*$/);
@@ -165,6 +139,11 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
 
   async function payWithCard() {
     if (isStripe) {
+      const expiry = parseExpiry(card.expiry);
+      if (!expiry) {
+        setError('Validade do cartão inválida. Use o formato MM/AA.');
+        return;
+      }
       setError(null);
       setCreating(true);
       try {
@@ -177,17 +156,28 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
         });
         setCharge(ch);
         const stripe = await getStripe();
-        if (!stripe || !cardElRef.current) {
+        if (!stripe) {
           setError('A chave pública do Stripe ainda não foi configurada. Aviso o administrador do site.');
           return;
         }
-        const { error: confirmErr, paymentIntent } = await stripe.confirmCardPayment(ch.clientSecret, {
-          payment_method: {
-            card: cardElRef.current,
-            billing_details: {
-              name: form.name.trim(),
-            },
+        const { paymentMethod, error: pmErr } = await stripe.createPaymentMethod({
+          type: 'card',
+          card: {
+            number: card.number.replace(/\D/g, ''),
+            exp_month: expiry.expiryMonth,
+            exp_year: expiry.expiryYear,
+            cvc: card.ccv.replace(/\D/g, ''),
           },
+          billing_details: {
+            name: form.name.trim(),
+          },
+        });
+        if (pmErr) {
+          setError(pmErr.message || 'Dados do cartão inválidos.');
+          return;
+        }
+        const { error: confirmErr, paymentIntent } = await stripe.confirmCardPayment(ch.clientSecret, {
+          payment_method: paymentMethod.id,
         });
         if (confirmErr) {
           setError(confirmErr.message || 'Pagamento recusado.');
@@ -420,18 +410,46 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
               Cartão de crédito processado com segurança pelo <strong>Stripe</strong>.
             </div>
             <label className="field">
-              <span>Cartão</span>
-              <div ref={cardMountRef} className="stripe-card-element" />
+              <span>Número do cartão</span>
+              <input
+                inputMode="numeric"
+                autoComplete="cc-number"
+                value={card.number}
+                onChange={(e) => setCard({ ...card, number: e.target.value })}
+                placeholder="0000 0000 0000 0000"
+              />
             </label>
             <label className="field">
               <span>Nome impresso no cartão</span>
               <input
+                autoComplete="cc-name"
                 value={card.holderName}
                 onChange={(e) => setCard({ ...card, holderName: e.target.value })}
                 placeholder="Como está no cartão"
               />
             </label>
-
+            <div className="card-row">
+              <label className="field">
+                <span>Validade (MM/AA)</span>
+                <input
+                  inputMode="numeric"
+                  autoComplete="cc-exp"
+                  value={card.expiry}
+                  onChange={(e) => setCard({ ...card, expiry: e.target.value })}
+                  placeholder="12/28"
+                />
+              </label>
+              <label className="field">
+                <span>CVV</span>
+                <input
+                  inputMode="numeric"
+                  autoComplete="cc-csc"
+                  value={card.ccv}
+                  onChange={(e) => setCard({ ...card, ccv: e.target.value })}
+                  placeholder="123"
+                />
+              </label>
+            </div>
             {error && <div className="form-error">{error}</div>}
             <button className="btn btn-primary btn-block" onClick={payWithCard} disabled={!cardValid || creating}>
               {creating ? 'Processando…' : `Pagar ${formatBRL(value)} no cartão`}
