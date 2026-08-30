@@ -313,10 +313,25 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
                   type="text"
                   value={form.amount}
                   onChange={(e) => {
-                    const cleaned = e.target.value.replace(/\D/g, '').slice(0, 5);
-                    setForm({ ...form, amount: cleaned === '' ? '' : Math.min(10000, Number(cleaned)) });
+                    const raw = e.target.value;
+                    const cleaned = raw.replace(/[^\d.,]/g, '');
+                    const lastDot = cleaned.lastIndexOf('.');
+                    const lastComma = cleaned.lastIndexOf(',');
+                    let norm;
+                    if (lastDot >= 0 || lastComma >= 0) {
+                      const sepIdx = Math.max(lastDot, lastComma);
+                      const intPart = cleaned.slice(0, sepIdx).replace(/[.,]/g, '');
+                      const decPart = cleaned.slice(sepIdx + 1).replace(/[.,]/g, '').slice(0, 2);
+                      norm = decPart ? `${intPart}.${decPart}` : `${intPart}.`;
+                    } else {
+                      norm = cleaned.replace(/[.,]/g, '');
+                    }
+                    if (norm.split('.')[0].length > 5) return;
+                    const n = parseFloat(norm);
+                    if (n > 10000) return;
+                    setForm({ ...form, amount: norm });
                   }}
-                  placeholder="10"
+                  placeholder="10.00"
                   aria-label="Valor da divulgação em reais"
                 />
                 <button
