@@ -216,10 +216,11 @@ app.get('/api/state', (req, res) => res.json(computeState()));
 
 // ===== divulgação paga (Cartão via Stripe) =====
 app.post('/api/promote', async (req, res) => {
-  const { name, network, handle, amount, method } = req.body || {};
+  const { name, network, handle, amount, method, email } = req.body || {};
   const cleanName = String(name || '').trim().slice(0, 40);
   const cleanNetwork = String(network || '').trim().toLowerCase();
   const cleanHandle = String(handle || '').trim().slice(0, 120);
+  const cleanEmail = String(email || '').trim().toLowerCase().slice(0, 200);
   const value = Number(amount);
   const cleanMethod = String(method || 'pix').trim().toLowerCase();
 
@@ -229,6 +230,11 @@ app.post('/api/promote', async (req, res) => {
   if (!PAYMENT_METHODS.includes(cleanMethod)) return res.status(400).json({ error: 'Forma de pagamento inválida.' });
   if (!Number.isFinite(value) || value < MIN_DONATION || value > MAX_DONATION) {
     return res.status(422).json({ error: `Divulgação de R$ ${MIN_DONATION},00 a R$ ${MAX_DONATION},00.` });
+  }
+  if (cleanMethod === 'credit_card') {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
+      return res.status(422).json({ error: 'Informe um e-mail válido para receber o recibo.' });
+    }
   }
 
   const social = { name: cleanName, network: cleanNetwork, handle: cleanHandle };
@@ -260,6 +266,7 @@ app.post('/api/promote', async (req, res) => {
         amount: Math.round(value * 100),
         currency: 'brl',
         payment_method_types: ['card'],
+        receipt_email: cleanEmail,
         metadata: { reference },
         description: `Divulgação · ${cleanName}`,
       },
@@ -276,6 +283,7 @@ app.post('/api/promote', async (req, res) => {
       method: cleanMethod,
       amount: value,
       status: 'PENDING',
+      email: cleanEmail,
       social,
       ts: Date.now(),
     };

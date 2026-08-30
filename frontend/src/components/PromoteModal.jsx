@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { formatBRL } from '../candidates.js';
 import { api } from '../api.js';
@@ -46,13 +46,31 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
 
   const [form, setForm] = useState({ name: '', network: 'instagram', handle: '', amount: 10 });
   const [method, setMethod] = useState('credit_card');
-  const [card, setCard] = useState({ holderName: '', number: '', expiry: '', ccv: '' });
+  const [card, setCard] = useState({
+    holderName: '',
+    number: '',
+    expiry: '',
+    ccv: '',
+    email: '',
+    taxId: '',
+    cep: '',
+    address: '',
+    city: '',
+    state: '',
+  });
   const [phase, setPhase] = useState('form');
   const [charge, setCharge] = useState(null);
   const [creating, setCreating] = useState(false);
   const [statusText, setStatusText] = useState('Aguardando pagamento…');
   const [error, setError] = useState(null);
   const [paidResult, setPaidResult] = useState(null);
+  const [cardComplete, setCardComplete] = useState(false);
+  const cardNumberRef = useRef(null);
+  const cardExpiryRef = useRef(null);
+  const cardCvcRef = useRef(null);
+  const cardNumberEl = useRef(null);
+  const cardExpiryEl = useRef(null);
+  const cardCvcEl = useRef(null);
 
   const countdownSeconds = isStripe ? 600 : 60;
   const { seconds, expired, setExpired } = useCountdown(phase === 'payment', countdownSeconds);
@@ -61,6 +79,65 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
     if (!publishableKey) return null;
     return loadStripe(publishableKey);
   }, [publishableKey]);
+
+  // Monta os elementos de cartão do Stripe (número, validade, CVV) quando necessário
+  useEffect(() => {
+    if (phase !== 'card' || !isStripe || !stripeReady) return;
+    let cancelled = false;
+    (async () => {
+      const stripe = await getStripe();
+      if (!stripe || cancelled) return;
+      const elements = stripe.elements({ locale: 'pt-BR' });
+      const style = {
+        base: {
+          fontSize: '15px',
+          color: '#e6edf3',
+          '::placeholder': { color: '#8b949e' },
+          '::selection': { backgroundColor: 'rgba(0,200,83,0.3)' },
+        },
+        invalid: { color: '#f85149' },
+      };
+      const numberEl = elements.create('cardNumber', { style, showIcon: true });
+      const expiryEl = elements.create('cardExpiry', { style });
+      const cvcEl = elements.create('cardCvc', { style });
+      cardNumberEl.current = numberEl;
+      cardExpiryEl.current = expiryEl;
+      cardCvcEl.current = cvcEl;
+      const state = { number: false, expiry: false, cvc: false };
+      const refreshComplete = () => setCardComplete(state.number && state.expiry && state.cvc);
+      numberEl.on('change', (e) => {
+        state.number = e.complete;
+        refreshComplete();
+      });
+      expiryEl.on('change', (e) => {
+        state.expiry = e.complete;
+        refreshComplete();
+      });
+      cvcEl.on('change', (e) => {
+        state.cvc = e.complete;
+        refreshComplete();
+      });
+      if (cardNumberRef.current) numberEl.mount(cardNumberRef.current);
+      if (cardExpiryRef.current) expiryEl.mount(cardExpiryRef.current);
+      if (cardCvcRef.current) cvcEl.mount(cardCvcRef.current);
+    })();
+    return () => {
+      cancelled = true;
+      try {
+        cardNumberEl.current?.unmount();
+        cardExpiryEl.current?.unmount();
+        cardCvcEl.current?.unmount();
+        cardNumberEl.current?.destroy();
+        cardExpiryEl.current?.destroy();
+        cardCvcEl.current?.destroy();
+      } catch {
+        /* noop */
+      }
+      cardNumberEl.current = null;
+      cardExpiryEl.current = null;
+      cardCvcEl.current = null;
+    };
+  }, [phase, isStripe, stripeReady, getStripe]);
 
   useEffect(() => {
     const isChargedMethod = charge?.method === 'credit_card';
@@ -90,11 +167,19 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
   const value = Number(form.amount);
   const baseValid = form.name.trim() && form.handle.trim() && Number.isFinite(value) && value >= 10;
   const expiryParsed = parseExpiry(card.expiry);
-  const cardValid =
-    card.holderName.trim() &&
-    card.number.replace(/\D/g, '').length >= 13 &&
-    Boolean(expiryParsed) &&
-    card.ccv.replace(/\D/g, '').length >= 3;
+  const cardValid = isStripe
+    ? card.holderName.trim() &&
+      cardComplete &&
+      /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(card.email.trim()) &&
+      card.taxId.replace(/\D/g, '').length >= 11 &&
+      card.cep.replace(/\D/g, '').length === 8 &&
+      card.address.trim().length >= 4 &&
+      card.city.trim().length >= 2 &&
+      card.state.trim().length >= 2
+    : card.holderName.trim() &&
+      card.number.replace(/\D/g, '').length >= 13 &&
+      Boolean(expiryParsed) &&
+      card.ccv.replace(/\D/g, '').length >= 3;
 
   function parseExpiry(exp) {
     const m = String(exp || '').match(/^\s*(\d{1,2})\s*[\/\-\s]\s*(\d{2,4})\s*$/);
@@ -132,11 +217,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
 
   async function payWithCard() {
     if (isStripe) {
-      const expiry = parseExpiry(card.expiry);
-      if (!expiry) {
-        setError('Validade do cartão inválida. Use o formato MM/AA.');
-        return;
-      }
       setError(null);
       setCreating(true);
       try {
@@ -146,23 +226,28 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
           handle: form.handle.trim(),
           amount: value,
           method: 'credit_card',
+          email: card.email.trim(),
         });
         setCharge(ch);
         const stripe = await getStripe();
-        if (!stripe) {
+        if (!stripe || !cardNumberEl.current) {
           setError('A chave pública do Stripe ainda não foi configurada. Aviso o administrador do site.');
           return;
         }
         const { paymentMethod, error: pmErr } = await stripe.createPaymentMethod({
           type: 'card',
-          card: {
-            number: card.number.replace(/\D/g, ''),
-            exp_month: expiry.expiryMonth,
-            exp_year: expiry.expiryYear,
-            cvc: card.ccv.replace(/\D/g, ''),
-          },
+          card: cardNumberEl.current,
           billing_details: {
-            name: form.name.trim(),
+            name: card.holderName.trim(),
+            email: card.email.trim(),
+            tax_id: card.taxId.replace(/\D/g, ''),
+            address: {
+              line1: card.address.trim(),
+              city: card.city.trim(),
+              state: card.state.trim().toUpperCase(),
+              postal_code: card.cep.replace(/\D/g, ''),
+              country: 'BR',
+            },
           },
         });
         if (pmErr) {
@@ -171,6 +256,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
         }
         const { error: confirmErr, paymentIntent } = await stripe.confirmCardPayment(ch.clientSecret, {
           payment_method: paymentMethod.id,
+          receipt_email: card.email.trim(),
         });
         if (confirmErr) {
           setError(confirmErr.message || 'Pagamento recusado.');
@@ -386,12 +472,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
             </div>
             <label className="field">
               <span>Número do cartão</span>
-              <input
-                autoComplete="cc-number"
-                value={card.number}
-                onChange={(e) => setCard({ ...card, number: e.target.value })}
-                placeholder="0000 0000 0000 0000"
-              />
+              <div ref={cardNumberRef} className="stripe-card-element" />
             </label>
             <label className="field">
               <span>Nome impresso no cartão</span>
@@ -405,23 +486,75 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
             <div className="card-row">
               <label className="field">
                 <span>Validade (MM/AA)</span>
-                <input
-                  autoComplete="cc-exp"
-                  value={card.expiry}
-                  onChange={(e) => setCard({ ...card, expiry: e.target.value })}
-                  placeholder="12/28"
-                />
+                <div ref={cardExpiryRef} className="stripe-card-element" />
               </label>
               <label className="field">
                 <span>CVV</span>
+                <div ref={cardCvcRef} className="stripe-card-element" />
+              </label>
+            </div>
+            <div className="card-row">
+              <label className="field">
+                <span>CPF ou CNPJ</span>
                 <input
-                  autoComplete="cc-csc"
-                  value={card.ccv}
-                  onChange={(e) => setCard({ ...card, ccv: e.target.value })}
-                  placeholder="123"
+                  autoComplete="off"
+                  inputMode="numeric"
+                  value={card.taxId}
+                  onChange={(e) => setCard({ ...card, taxId: e.target.value })}
+                  placeholder="Somente números"
+                />
+              </label>
+              <label className="field">
+                <span>CEP</span>
+                <input
+                  autoComplete="postal-code"
+                  inputMode="numeric"
+                  value={card.cep}
+                  onChange={(e) => setCard({ ...card, cep: e.target.value })}
+                  placeholder="00000-000"
                 />
               </label>
             </div>
+            <label className="field">
+              <span>Endereço de cobrança</span>
+              <input
+                autoComplete="street-address"
+                value={card.address}
+                onChange={(e) => setCard({ ...card, address: e.target.value })}
+                placeholder="Rua, número, complemento"
+              />
+            </label>
+            <div className="card-row">
+              <label className="field">
+                <span>Cidade</span>
+                <input
+                  autoComplete="address-level2"
+                  value={card.city}
+                  onChange={(e) => setCard({ ...card, city: e.target.value })}
+                  placeholder="Cidade"
+                />
+              </label>
+              <label className="field">
+                <span>Estado (UF)</span>
+                <input
+                  autoComplete="address-level1"
+                  value={card.state}
+                  onChange={(e) => setCard({ ...card, state: e.target.value.toUpperCase() })}
+                  placeholder="SP"
+                  maxLength={2}
+                />
+              </label>
+            </div>
+            <label className="field">
+              <span>E-mail para o recibo</span>
+              <input
+                autoComplete="email"
+                type="email"
+                value={card.email}
+                onChange={(e) => setCard({ ...card, email: e.target.value })}
+                placeholder="seu@email.com"
+              />
+            </label>
             {error && <div className="form-error">{error}</div>}
             <button className="btn btn-primary btn-block" onClick={payWithCard} disabled={!cardValid || creating}>
               {creating ? 'Processando…' : `Pagar ${formatBRL(value)} no cartão`}
