@@ -30,7 +30,7 @@ export default function TopSupporters({ supporters }) {
           <div className="supporters-empty">
             Nenhum link divulgado ainda.
             <br />
-            Divulgue seu link pagando via PIX!
+            Divulgue seu link pagando via Cartão ou USDT!
           </div>
         ) : (
           supporters.map((s, i) => (
@@ -47,12 +47,12 @@ export default function TopSupporters({ supporters }) {
               </span>
               <span className="supporter-avatar">{initials(s.name)}</span>
               <span className="supporter-body">
-                <span className="supporter-name">{s.name}</span>
+                <span className="supporter-name-row">
+                  <span className="supporter-name">{s.name}</span>
+                  <span className="supporter-amount">{formatBRL(s.amount)}</span>
+                </span>
                 <span className="supporter-meta">
                   <span className="supporter-network">{s.networkLabel}</span>
-                  <span className="supporter-amount">
-                    {formatBRL(s.amount)}
-                  </span>
                 </span>
               </span>
               <span className="supporter-cta" title="Visitar perfil">↗</span>

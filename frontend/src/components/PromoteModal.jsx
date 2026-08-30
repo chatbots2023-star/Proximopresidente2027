@@ -45,7 +45,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
   const isStripe = siteMode === 'stripe';
   const stripeReady = isStripe && Boolean(publishableKey);
 
-  const [form, setForm] = useState({ name: '', network: 'instagram', handle: '', amount: '' });
+  const [form, setForm] = useState({ name: '', network: 'instagram', handle: '', amount: 10 });
   const [method, setMethod] = useState('credit_card');
   const [card, setCard] = useState({ holderName: '', number: '', expiry: '', ccv: '' });
   const [holder, setHolder] = useState({ email: '', cpfCnpj: '', postalCode: '', addressNumber: '', phone: '' });
@@ -357,14 +357,27 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
             </label>
             <label className="field">
               <span>Valor da divulgação (R$)</span>
-              <input
-                type="number"
-                min={10}
-                max={10000}
-                value={form.amount}
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                placeholder="10"
-              />
+              <div className="amount-stepper">
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setForm({ ...form, amount: Math.max(10, value - 10) })}
+                  disabled={value <= 10}
+                  aria-label="Diminuir valor"
+                >
+                  −
+                </button>
+                <span className="step-value">{formatBRL(value)}</span>
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setForm({ ...form, amount: Math.min(10000, value + 10) })}
+                  disabled={value >= 10000}
+                  aria-label="Aumentar valor"
+                >
+                  +
+                </button>
+              </div>
             </label>
 
             <div className="method-label">Forma de pagamento</div>
