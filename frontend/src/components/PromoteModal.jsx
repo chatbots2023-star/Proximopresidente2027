@@ -71,13 +71,17 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
   const cardNumberEl = useRef(null);
   const cardExpiryEl = useRef(null);
   const cardCvcEl = useRef(null);
+  const stripeRef = useRef(null);
 
   const countdownSeconds = isStripe ? 600 : 60;
   const { seconds, expired, setExpired } = useCountdown(phase === 'payment', countdownSeconds);
 
   const getStripe = useCallback(async () => {
     if (!publishableKey) return null;
-    return loadStripe(publishableKey);
+    if (stripeRef.current?.key !== publishableKey) {
+      stripeRef.current = { key: publishableKey, instance: await loadStripe(publishableKey) };
+    }
+    return stripeRef.current.instance;
   }, [publishableKey]);
 
   // Monta os elementos de cartão do Stripe (número, validade, CVV) quando necessário
