@@ -198,6 +198,7 @@ export default function App() {
               onCorrige={onCorrige}
               onConfirm={onConfirm}
               processing={false}
+              disabled={promoteOpen}
             />
             <div className="urna-legend">
               <span><b>1</b> Escolha seu candidato</span>

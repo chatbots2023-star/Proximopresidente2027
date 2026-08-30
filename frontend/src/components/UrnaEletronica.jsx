@@ -1,11 +1,16 @@
 import { useEffect } from 'react';
 import CandidateAvatar from './CandidateAvatar.jsx';
 
-export default function UrnaEletronica({ candidate, digits, onDigit, onBackspace, onCorrige, onConfirm, processing }) {
-  const canConfirm = !!candidate && !processing;
+export default function UrnaEletronica({ candidate, digits, onDigit, onBackspace, onCorrige, onConfirm, processing, disabled }) {
+  const canConfirm = !!candidate && !processing && !disabled;
 
   useEffect(() => {
+    if (disabled) return undefined;
     const handler = (e) => {
+      const tag = e.target?.tagName;
+      const editable =
+        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || e.target?.isContentEditable;
+      if (editable) return;
       if (e.key >= '0' && e.key <= '9') {
         e.preventDefault();
         onDigit(e.key);
@@ -19,7 +24,7 @@ export default function UrnaEletronica({ candidate, digits, onDigit, onBackspace
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [canConfirm, onDigit, onBackspace, onConfirm]);
+  }, [disabled, canConfirm, onDigit, onBackspace, onConfirm]);
 
   const digitsList = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 

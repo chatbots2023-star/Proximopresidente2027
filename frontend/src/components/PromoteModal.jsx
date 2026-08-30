@@ -342,21 +342,13 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
                 </button>
                 <input
                   className="step-input"
-                  type="number"
-                  min={10}
-                  max={10000}
-                  step={10}
+                  type="text"
                   value={form.amount}
                   onChange={(e) => {
-                    const raw = e.target.value;
-                    if (raw === '') {
-                      setForm({ ...form, amount: '' });
-                      return;
-                    }
-                    const n = Number(raw);
-                    if (!Number.isFinite(n)) return;
-                    setForm({ ...form, amount: Math.min(10000, Math.max(0, n)) });
+                    const cleaned = e.target.value.replace(/\D/g, '').slice(0, 5);
+                    setForm({ ...form, amount: cleaned === '' ? '' : Math.min(10000, Number(cleaned)) });
                   }}
+                  placeholder="10"
                   aria-label="Valor da divulgação em reais"
                 />
                 <button
@@ -412,7 +404,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
             <label className="field">
               <span>Número do cartão</span>
               <input
-                inputMode="numeric"
                 autoComplete="cc-number"
                 value={card.number}
                 onChange={(e) => setCard({ ...card, number: e.target.value })}
@@ -432,7 +423,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
               <label className="field">
                 <span>Validade (MM/AA)</span>
                 <input
-                  inputMode="numeric"
                   autoComplete="cc-exp"
                   value={card.expiry}
                   onChange={(e) => setCard({ ...card, expiry: e.target.value })}
@@ -442,7 +432,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
               <label className="field">
                 <span>CVV</span>
                 <input
-                  inputMode="numeric"
                   autoComplete="cc-csc"
                   value={card.ccv}
                   onChange={(e) => setCard({ ...card, ccv: e.target.value })}
