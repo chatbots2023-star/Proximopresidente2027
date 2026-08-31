@@ -152,20 +152,20 @@ function isPaidStatus(status) {
 }
 
 async function recordPromotion(charge) {
-  if (state.promotions.some((p) => p.id === charge.reference)) {
-    return { already: true, state: computeState() };
+  let promotion = state.promotions.find((p) => p.id === charge.reference);
+  if (!promotion) {
+    promotion = {
+      id: charge.reference,
+      name: charge.social.name,
+      network: charge.social.network,
+      handle: charge.social.handle,
+      profileUrl: buildProfileUrl(charge.social.network, charge.social.handle),
+      amount: charge.amount,
+      ts: Date.now(),
+    };
+    state.promotions.push(promotion);
+    await saveState(state);
   }
-  const promotion = {
-    id: charge.reference,
-    name: charge.social.name,
-    network: charge.social.network,
-    handle: charge.social.handle,
-    profileUrl: buildProfileUrl(charge.social.network, charge.social.handle),
-    amount: charge.amount,
-    ts: Date.now(),
-  };
-  state.promotions.push(promotion);
-  await saveState(state);
   return { promotion, state: computeState() };
 }
 
