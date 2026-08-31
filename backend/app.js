@@ -181,11 +181,21 @@ app.use(cors());
 // Webhook da Pushin Pay — registrado ANTES do express.json()
 app.get('/api/webhook/pushin', (req, res) => res.status(200).json({ ok: true }));
 
-app.post('/api/webhook/pushin', express.json({ type: () => true }), async (req, res) => {
-  const body = req.body || {};
+app.post('/api/webhook/pushin', express.raw({ type: () => true, limit: '1mb' }), async (req, res) => {
+  // Aceita JSON ou application/x-www-form-urlencoded: algumas integrações
+  // (ex.: painel da Pushin Pay) podem entregar o webhook em outro formato.
+  let body = {};
+  const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '');
+  if (raw) {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      for (const [k, v] of new URLSearchParams(raw)) body[k] = v;
+    }
+  }
   const txId = String(body?.id || '');
-  const raw = String(body?.status || '');
-  if (!txId || !['paid', 'canceled', 'expired'].includes(raw)) {
+  const rawStatus = String(body?.status || '');
+  if (!txId || !['paid', 'canceled', 'expired'].includes(rawStatus)) {
     return res.status(200).json({ ok: true, ignored: true });
   }
   const charge = Object.values(state.charges).find(
@@ -193,7 +203,7 @@ app.post('/api/webhook/pushin', express.json({ type: () => true }), async (req, 
   );
   if (!charge) return res.status(200).json({ ok: true, ignored: true });
 
-  const newStatus = raw === 'paid' ? 'PAID' : raw === 'canceled' ? 'CANCELED' : 'EXPIRED';
+  const newStatus = rawStatus === 'paid' ? 'PAID' : rawStatus === 'canceled' ? 'CANCELED' : 'EXPIRED';
   if (newStatus !== charge.status) {
     charge.status = newStatus;
     if (body.end_to_end_id) charge.end_to_end_id = body.end_to_end_id;
