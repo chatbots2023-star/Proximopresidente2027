@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { loadStripe } from '@stripe/stripe-js';
+import { useEffect, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import { formatBRL } from '../candidates.js';
 import { api } from '../api.js';
 
@@ -14,9 +14,20 @@ const SOCIAL_OPTIONS = [
   ['site', 'Site ou Blogger'],
 ];
 
-const METHOD_OPTIONS = [
-  ['credit_card', 'Cartão de Crédito', 'Visa, Master etc.'],
-];
+const METHOD_OPTIONS = [['pix', 'PIX', 'QR Code na hora']];
+
+function statusLabel(status) {
+  switch (status) {
+    case 'PAID':
+      return 'Pagamento confirmado!';
+    case 'CANCELED':
+      return 'Cobrança cancelada.';
+    case 'EXPIRED':
+      return 'Cobrança expirada.';
+    default:
+      return 'Aguardando pagamento…';
+  }
+}
 
 function useCountdown(active, duration = 60) {
   const [seconds, setSeconds] = useState(duration);
@@ -40,112 +51,32 @@ function useCountdown(active, duration = 60) {
   return { seconds, expired, setExpired };
 }
 
-export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose }) {
-  const isStripe = siteMode === 'stripe';
-  const stripeReady = isStripe && Boolean(publishableKey);
+export default function PromoteModal({ siteMode, onPaid, onClose }) {
+  const isLive = siteMode === 'pushin';
 
   const [form, setForm] = useState({ name: '', network: 'instagram', handle: '', amount: 10 });
-  const [method, setMethod] = useState('credit_card');
-  const [card, setCard] = useState({
-    holderName: '',
-    number: '',
-    expiry: '',
-    ccv: '',
-    email: '',
-    taxId: '',
-    cep: '',
-    address: '',
-    city: '',
-    state: '',
-  });
+  const [method, setMethod] = useState('pix');
   const [phase, setPhase] = useState('form');
   const [charge, setCharge] = useState(null);
   const [creating, setCreating] = useState(false);
   const [statusText, setStatusText] = useState('Aguardando pagamento…');
+  const [copied, setCopied] = useState(null);
   const [error, setError] = useState(null);
   const [paidResult, setPaidResult] = useState(null);
-  const [cardComplete, setCardComplete] = useState(false);
-  const cardNumberRef = useRef(null);
-  const cardExpiryRef = useRef(null);
-  const cardCvcRef = useRef(null);
-  const cardNumberEl = useRef(null);
-  const cardExpiryEl = useRef(null);
-  const cardCvcEl = useRef(null);
-  const stripeRef = useRef(null);
+  const qrRef = useRef(null);
 
-  const countdownSeconds = isStripe ? 600 : 60;
+  const countdownSeconds = isLive ? 600 : 60;
   const { seconds, expired, setExpired } = useCountdown(phase === 'payment', countdownSeconds);
 
-  const getStripe = useCallback(async () => {
-    if (!publishableKey) return null;
-    if (stripeRef.current?.key !== publishableKey) {
-      stripeRef.current = { key: publishableKey, instance: await loadStripe(publishableKey) };
-    }
-    return stripeRef.current.instance;
-  }, [publishableKey]);
-
-  // Monta os elementos de cartão do Stripe (número, validade, CVV) quando necessário
+  // renderiza o QR Code a partir do código PIX (EMV)
   useEffect(() => {
-    if (phase !== 'card' || !isStripe || !stripeReady) return;
-    let cancelled = false;
-    (async () => {
-      const stripe = await getStripe();
-      if (!stripe || cancelled) return;
-      const elements = stripe.elements({ locale: 'pt-BR' });
-      const style = {
-        base: {
-          fontSize: '15px',
-          color: '#e6edf3',
-          '::placeholder': { color: '#8b949e' },
-          '::selection': { backgroundColor: 'rgba(0,200,83,0.3)' },
-        },
-        invalid: { color: '#f85149' },
-      };
-      const numberEl = elements.create('cardNumber', { style, showIcon: true });
-      const expiryEl = elements.create('cardExpiry', { style });
-      const cvcEl = elements.create('cardCvc', { style });
-      cardNumberEl.current = numberEl;
-      cardExpiryEl.current = expiryEl;
-      cardCvcEl.current = cvcEl;
-      const state = { number: false, expiry: false, cvc: false };
-      const refreshComplete = () => setCardComplete(state.number && state.expiry && state.cvc);
-      numberEl.on('change', (e) => {
-        state.number = e.complete;
-        refreshComplete();
-      });
-      expiryEl.on('change', (e) => {
-        state.expiry = e.complete;
-        refreshComplete();
-      });
-      cvcEl.on('change', (e) => {
-        state.cvc = e.complete;
-        refreshComplete();
-      });
-      if (cardNumberRef.current) numberEl.mount(cardNumberRef.current);
-      if (cardExpiryRef.current) expiryEl.mount(cardExpiryRef.current);
-      if (cardCvcRef.current) cvcEl.mount(cardCvcRef.current);
-    })();
-    return () => {
-      cancelled = true;
-      try {
-        cardNumberEl.current?.unmount();
-        cardExpiryEl.current?.unmount();
-        cardCvcEl.current?.unmount();
-        cardNumberEl.current?.destroy();
-        cardExpiryEl.current?.destroy();
-        cardCvcEl.current?.destroy();
-      } catch {
-        /* noop */
-      }
-      cardNumberEl.current = null;
-      cardExpiryEl.current = null;
-      cardCvcEl.current = null;
-    };
-  }, [phase, isStripe, stripeReady, getStripe]);
+    if (phase !== 'payment' || !charge?.qr_code || !qrRef.current) return;
+    QRCode.toCanvas(qrRef.current, charge.qr_code, { width: 214, margin: 1, errorCorrectionLevel: 'M' }).catch(() => {});
+  }, [phase, charge]);
 
+  // polling de status enquanto aguarda pagamento
   useEffect(() => {
-    const isChargedMethod = charge?.method === 'credit_card';
-    if (phase !== 'payment' || expired || !isStripe || !charge || !isChargedMethod) return;
+    if (phase !== 'payment' || expired || !charge) return;
     let alive = true;
     const poll = async () => {
       try {
@@ -156,6 +87,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
           setPhase('done');
           return;
         }
+        if (r.charge?.status) setStatusText(statusLabel(r.charge.status));
       } catch {
         /* mantém estado */
       }
@@ -166,39 +98,13 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
       alive = false;
       clearInterval(iv);
     };
-  }, [phase, expired, isStripe, charge]);
+  }, [phase, expired, charge]);
 
   const value = Number(form.amount);
   const baseValid = form.name.trim() && form.handle.trim() && Number.isFinite(value) && value >= 10;
-  const expiryParsed = parseExpiry(card.expiry);
-  const cardValid = isStripe
-    ? card.holderName.trim() &&
-      cardComplete &&
-      /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(card.email.trim()) &&
-      card.taxId.replace(/\D/g, '').length >= 11 &&
-      card.cep.replace(/\D/g, '').length === 8 &&
-      card.address.trim().length >= 4 &&
-      card.city.trim().length >= 2 &&
-      card.state.trim().length >= 2
-    : card.holderName.trim() &&
-      card.number.replace(/\D/g, '').length >= 13 &&
-      Boolean(expiryParsed) &&
-      card.ccv.replace(/\D/g, '').length >= 3;
-
-  function parseExpiry(exp) {
-    const m = String(exp || '').match(/^\s*(\d{1,2})\s*[\/\-\s]\s*(\d{2,4})\s*$/);
-    if (!m) return null;
-    let month = m[1].padStart(2, '0');
-    let year = m[2].length === 2 ? '20' + m[2] : m[2];
-    return { expiryMonth: month, expiryYear: year };
-  }
 
   async function startPayment() {
     setError(null);
-    if (method === 'credit_card' && isStripe) {
-      setPhase('card');
-      return;
-    }
     setCreating(true);
     try {
       const ch = await api.promote({
@@ -209,99 +115,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
         method,
       });
       setCharge(ch);
-
       setStatusText('Aguardando pagamento…');
-      setPhase('payment');
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function payWithCard() {
-    if (isStripe) {
-      setError(null);
-      setCreating(true);
-      try {
-        const ch = await api.promote({
-          name: form.name.trim(),
-          network: form.network,
-          handle: form.handle.trim(),
-          amount: value,
-          method: 'credit_card',
-          email: card.email.trim(),
-        });
-        setCharge(ch);
-        const stripe = await getStripe();
-        if (!stripe || !cardNumberEl.current) {
-          setError('A chave pública do Stripe ainda não foi configurada. Aviso o administrador do site.');
-          return;
-        }
-        const { paymentMethod, error: pmErr } = await stripe.createPaymentMethod({
-          type: 'card',
-          card: cardNumberEl.current,
-          billing_details: {
-            name: card.holderName.trim(),
-            email: card.email.trim(),
-            tax_id: card.taxId.replace(/\D/g, ''),
-            address: {
-              line1: card.address.trim(),
-              city: card.city.trim(),
-              state: card.state.trim().toUpperCase(),
-              postal_code: card.cep.replace(/\D/g, ''),
-              country: 'BR',
-            },
-          },
-        });
-        if (pmErr) {
-          setError(pmErr.message || 'Dados do cartão inválidos.');
-          return;
-        }
-        const { error: confirmErr, paymentIntent } = await stripe.confirmCardPayment(ch.clientSecret, {
-          payment_method: paymentMethod.id,
-          receipt_email: card.email.trim(),
-        });
-        if (confirmErr) {
-          setError(confirmErr.message || 'Pagamento recusado.');
-          return;
-        }
-        if (paymentIntent?.status === 'succeeded') {
-          const r = await api.chargeStatus(ch.reference);
-          if (r.promotion) {
-            setPaidResult(r);
-            setPhase('done');
-            return;
-          }
-        }
-        setStatusText('Processando pagamento…');
-        setPhase('payment');
-      } catch (e) {
-        setError(e.message);
-      } finally {
-        setCreating(false);
-      }
-      return;
-    }
-
-    // modo demonstração
-    const expiry = parseExpiry(card.expiry);
-    if (!expiry) {
-      setError('Validade do cartão inválida. Use o formato MM/AA.');
-      return;
-    }
-    setError(null);
-    setCreating(true);
-    try {
-      const ch = await api.promote({
-        name: form.name.trim(),
-        network: form.network,
-        handle: form.handle.trim(),
-        amount: value,
-        method: 'credit_card',
-      });
-      setCharge(ch);
-      setStatusText('Processando pagamento…');
       setPhase('payment');
     } catch (e) {
       setError(e.message);
@@ -314,6 +128,16 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
     setCharge(null);
     setExpired(false);
     await startPayment();
+  }
+
+  async function copy(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied('code');
+      setTimeout(() => setCopied(null), 1600);
+    } catch {
+      setCopied('error');
+    }
   }
 
   async function simulatePayment() {
@@ -333,11 +157,6 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
     onClose();
   }
 
-  function backToForm() {
-    setPhase('form');
-    setError(null);
-  }
-
   const mmss = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 
   return (
@@ -353,8 +172,8 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
         {phase === 'form' && (
           <div className="checkout-form">
             <div className="checkout-note">
-              Pague para divulgar seu link no topo da lista (a partir de <strong>R$ 10,00</strong>). Quem paga mais
-              fica no topo.
+              Pague via <strong>PIX</strong> para divulgar seu link no topo da lista (a partir de{' '}
+              <strong>R$ 10,00</strong>). Quem paga mais fica no topo.
             </div>
             <label className="field">
               <span>Nome que vai aparecer na lista</span>
@@ -451,169 +270,20 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
               ))}
             </div>
 
-            {isStripe && !publishableKey && (
-              <div className="form-error">
-                A chave pública do Stripe (pk_live) ainda não foi configurada. O administrador precisa adicioná-la
-                para processar pagamentos.
+            {isLive && (
+              <div className="pushin-disclaimer">
+                A PUSHIN PAY atua exclusivamente como processadora de pagamentos e não possui qualquer responsabilidade
+                pela entrega, suporte, conteúdo, qualidade ou cumprimento das obrigações relacionadas aos produtos ou
+                serviços oferecidos pelo vendedor. Termos:{' '}
+                <a href="https://pushinpay.com.br/termos-de-uso" target="_blank" rel="noopener noreferrer">
+                  pushinpay.com.br/termos-de-uso
+                </a>
               </div>
             )}
 
             {error && <div className="form-error">{error}</div>}
-            <button
-              className="btn btn-primary btn-block"
-              onClick={startPayment}
-              disabled={!baseValid || creating}
-            >
-              {creating ? 'Gerando…' : method === 'credit_card' && isStripe ? 'Continuar para o cartão' : 'Gerar pagamento e divulgar'}
-            </button>
-          </div>
-        )}
-
-        {phase === 'card' && isStripe && (
-          <div className="checkout-form">
-            <div className="checkout-note">
-              Cartão de crédito processado com segurança pelo <strong>Stripe</strong>.
-            </div>
-            <label className="field">
-              <span>Número do cartão</span>
-              <div ref={cardNumberRef} className="stripe-card-element" />
-            </label>
-            <label className="field">
-              <span>Nome impresso no cartão</span>
-              <input
-                autoComplete="cc-name"
-                value={card.holderName}
-                onChange={(e) => setCard({ ...card, holderName: e.target.value })}
-                placeholder="Como está no cartão"
-              />
-            </label>
-            <div className="card-row">
-              <label className="field">
-                <span>Validade (MM/AA)</span>
-                <div ref={cardExpiryRef} className="stripe-card-element" />
-              </label>
-              <label className="field">
-                <span>CVV</span>
-                <div ref={cardCvcRef} className="stripe-card-element" />
-              </label>
-            </div>
-            <div className="card-row">
-              <label className="field">
-                <span>CPF ou CNPJ</span>
-                <input
-                  autoComplete="off"
-                  inputMode="numeric"
-                  value={card.taxId}
-                  onChange={(e) => setCard({ ...card, taxId: e.target.value })}
-                  placeholder="Somente números"
-                />
-              </label>
-              <label className="field">
-                <span>CEP</span>
-                <input
-                  autoComplete="postal-code"
-                  inputMode="numeric"
-                  value={card.cep}
-                  onChange={(e) => setCard({ ...card, cep: e.target.value })}
-                  placeholder="00000-000"
-                />
-              </label>
-            </div>
-            <label className="field">
-              <span>Endereço de cobrança</span>
-              <input
-                autoComplete="street-address"
-                value={card.address}
-                onChange={(e) => setCard({ ...card, address: e.target.value })}
-                placeholder="Rua, número, complemento"
-              />
-            </label>
-            <div className="card-row">
-              <label className="field">
-                <span>Cidade</span>
-                <input
-                  autoComplete="address-level2"
-                  value={card.city}
-                  onChange={(e) => setCard({ ...card, city: e.target.value })}
-                  placeholder="Cidade"
-                />
-              </label>
-              <label className="field">
-                <span>Estado (UF)</span>
-                <input
-                  autoComplete="address-level1"
-                  value={card.state}
-                  onChange={(e) => setCard({ ...card, state: e.target.value.toUpperCase() })}
-                  placeholder="SP"
-                  maxLength={2}
-                />
-              </label>
-            </div>
-            <label className="field">
-              <span>E-mail para o recibo</span>
-              <input
-                autoComplete="email"
-                type="email"
-                value={card.email}
-                onChange={(e) => setCard({ ...card, email: e.target.value })}
-                placeholder="seu@email.com"
-              />
-            </label>
-            {error && <div className="form-error">{error}</div>}
-            <button className="btn btn-primary btn-block" onClick={payWithCard} disabled={!cardValid || creating}>
-              {creating ? 'Processando…' : `Pagar ${formatBRL(value)} no cartão`}
-            </button>
-            <button className="btn btn-ghost btn-block" onClick={backToForm} disabled={creating}>
-              Voltar
-            </button>
-          </div>
-        )}
-
-        {phase === 'card' && !isStripe && (
-          <div className="checkout-form">
-            <div className="checkout-note">
-              Cartão de crédito <strong>(modo demonstração)</strong> — nenhum valor é cobrado.
-            </div>
-            <label className="field">
-              <span>Número do cartão</span>
-              <input
-                value={card.number}
-                onChange={(e) => setCard({ ...card, number: e.target.value })}
-                placeholder="0000 0000 0000 0000"
-              />
-            </label>
-            <label className="field">
-              <span>Nome impresso no cartão</span>
-              <input
-                value={card.holderName}
-                onChange={(e) => setCard({ ...card, holderName: e.target.value })}
-                placeholder="Como está no cartão"
-              />
-            </label>
-            <div className="card-row">
-              <label className="field">
-                <span>Validade (MM/AA)</span>
-                <input
-                  value={card.expiry}
-                  onChange={(e) => setCard({ ...card, expiry: e.target.value })}
-                  placeholder="12/28"
-                />
-              </label>
-              <label className="field">
-                <span>CVV</span>
-                <input
-                  value={card.ccv}
-                  onChange={(e) => setCard({ ...card, ccv: e.target.value })}
-                  placeholder="123"
-                />
-              </label>
-            </div>
-            {error && <div className="form-error">{error}</div>}
-            <button className="btn btn-primary btn-block" onClick={payWithCard} disabled={!cardValid || creating}>
-              {creating ? 'Processando…' : `Pagar ${formatBRL(value)} no cartão`}
-            </button>
-            <button className="btn btn-ghost btn-block" onClick={backToForm} disabled={creating}>
-              Voltar
+            <button className="btn btn-primary btn-block" onClick={startPayment} disabled={!baseValid || creating}>
+              {creating ? 'Gerando…' : `Gerar PIX de ${formatBRL(value)}`}
             </button>
           </div>
         )}
@@ -631,12 +301,35 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
             ) : (
               <>
                 <div className="pay-box-inner">
-                  <div className="pay-box-title">Cartão de Crédito</div>
+                  <div className="pay-box-title">Pagamento via PIX</div>
                   <div className="pay-box-amount">Valor: {formatBRL(charge.amount)}</div>
-                  <div className="pay-box-note">
-                    Pagamento processado pelo Stripe. Assim que o cartão for aprovado, seu link entra no Top
-                    Apoiadores.
+                </div>
+
+                {charge.qr_code_base64 ? (
+                  <img className="qr-img" src={charge.qr_code_base64} alt="QR Code PIX" />
+                ) : (
+                  <div className="qr-box">
+                    <canvas ref={qrRef} className="qr-canvas" />
                   </div>
+                )}
+
+                {charge.qr_code && (
+                  <div className="copy-row">
+                    <input
+                      readOnly
+                      value={charge.qr_code}
+                      className="copy-input"
+                      onFocus={(e) => e.target.select()}
+                    />
+                    <button className="copy-btn" onClick={() => copy(charge.qr_code)}>
+                      {copied === 'code' ? 'Copiado!' : 'Copiar'}
+                    </button>
+                  </div>
+                )}
+
+                <div className="pay-box-note">
+                  Abra o app do seu banco, escaneie o QR Code (ou cole o código) e confirme o pagamento. Assim que o
+                  PIX for pago, seu link entra no Top Apoiadores.
                 </div>
 
                 <div className="pay-status">
@@ -649,7 +342,7 @@ export default function PromoteModal({ siteMode, publishableKey, onPaid, onClose
                   <span className="countdown-time">{mmss}</span>
                 </div>
 
-                {!isStripe && (
+                {!isLive && (
                   <button className="btn btn-primary btn-block" onClick={simulatePayment}>
                     Simular pagamento concluído (demo)
                   </button>

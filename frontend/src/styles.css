@@ -172,10 +172,10 @@ button {
   border-radius: 999px;
 }
 
-.mode-badge.stripe {
-  color: #a4e8ff;
-  background: rgba(47, 127, 255, 0.14);
-  border: 1px solid rgba(47, 127, 255, 0.4);
+.mode-badge.pushin {
+  color: #a9ffc6;
+  background: rgba(27, 158, 75, 0.14);
+  border: 1px solid rgba(27, 158, 75, 0.4);
 }
 
 .mode-badge.demo {
@@ -1210,18 +1210,6 @@ button {
   opacity: 0.85;
 }
 
-.checkout-stripe-note {
-  margin-top: 18px;
-  font-size: 14px;
-  color: var(--muted);
-  line-height: 1.6;
-  text-align: center;
-}
-
-.checkout-stripe-note strong {
-  color: var(--text);
-}
-
 /* ---------- Celebration ---------- */
 .celebration {
   position: fixed;
@@ -1510,17 +1498,20 @@ button {
   box-shadow: 0 10px 34px rgba(0, 0, 0, 0.4);
 }
 
-.stripe-card-element {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border);
+.pushin-disclaimer {
+  margin-top: 12px;
+  padding: 10px 12px;
   border-radius: 10px;
-  padding: 12px 14px;
-  transition: border-color 0.2s;
+  background: rgba(255, 223, 0, 0.06);
+  border: 1px solid rgba(255, 223, 0, 0.3);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+  text-align: center;
 }
 
-.stripe-card-element:focus-within {
-  outline: none;
-  border-color: var(--green);
+.pushin-disclaimer a {
+  color: #ffd60a;
 }
 
 .holder-section {

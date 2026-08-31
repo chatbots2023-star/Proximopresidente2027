@@ -106,8 +106,8 @@ export default function App() {
             <span className="live-badge">
               <span className="live-dot" /> AO VIVO
             </span>
-            <span className={`mode-badge ${mode === 'stripe' ? 'stripe' : 'demo'}`}>
-              {mode === 'stripe' ? 'Stripe · Cartão' : 'Modo demonstração'}
+            <span className={`mode-badge ${mode === 'pushin' ? 'pushin' : 'demo'}`}>
+              {mode === 'pushin' ? 'Pushin Pay · PIX' : 'Modo demonstração'}
             </span>
           </div>
         </div>
@@ -125,7 +125,7 @@ export default function App() {
           </h1>
           <p className="hero-sub">
             Eleição digital 100% justa e democratizada. Voto grátis (1 por pessoa) e divulgação do seu link paga via
-            cartão.
+            PIX.
           </p>
           <div className="hero-stats">
             <div className="stat-card">
@@ -251,7 +251,7 @@ export default function App() {
           <p className="footer-title">Próximo Presidente · Eleição justa e democratizada · Brasil 2027</p>
           <p className="footer-sub">
             Projeto demonstrativo de votação digital. Divulgações pagas processadas de forma segura via{' '}
-            <strong>Stripe</strong> (Cartão). Nenhum voto oficial é emitido neste site.
+            <strong>Pushin Pay</strong> (PIX). Nenhum voto oficial é emitido neste site.
           </p>
           <p className="footer-contact">
             Suporte: <a href="mailto:chatbots2023@gmail.com">chatbots2023@gmail.com</a>
@@ -262,7 +262,6 @@ export default function App() {
       {promoteOpen && (
         <PromoteModal
           siteMode={mode}
-          publishableKey={data?.publishableKey || null}
           onPaid={handlePromotePaid}
           onClose={() => setPromoteOpen(false)}
         />

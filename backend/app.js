@@ -3,17 +3,21 @@ import cors from 'cors';
 import crypto from 'node:crypto';
 import { loadState, saveState } from './storage.js';
 
-// ===== Stripe (live) — apenas no backend, via variável de ambiente =====
-const STRIPE_SECRET_KEY = (process.env.STRIPE_SECRET_KEY || '').trim();
-const STRIPE_PUBLISHABLE_KEY = (process.env.STRIPE_PUBLISHABLE_KEY || '').trim();
-const HAS_KEY = Boolean(STRIPE_SECRET_KEY);
-const MODE = HAS_KEY ? 'stripe' : 'mock';
-const WEBHOOK_READY = false;
+// ===== Pushin Pay (PIX) — token sensível, apenas no backend via variável de ambiente =====
+const PUSHIN_PAY_TOKEN = (process.env.PUSHIN_PAY_TOKEN || '').trim();
+const PUSHIN_PAY_BASE_URL = (process.env.PUSHIN_PAY_BASE_URL || 'https://api.pushinpay.com.br/api').trim();
+const HAS_KEY = Boolean(PUSHIN_PAY_TOKEN);
+const MODE = HAS_KEY ? 'pushin' : 'mock';
+// URL do webhook de status: pode ser definida explicitamente ou derivada do site Netlify.
+const WEBHOOK_URL = (
+  process.env.PUSHIN_PAY_WEBHOOK_URL || (process.env.URL ? `${process.env.URL}/api/webhook/pushin` : '') || ''
+).trim();
+const WEBHOOK_READY = Boolean(WEBHOOK_URL);
 
 const MIN_DONATION = 10;
 const MAX_DONATION = 10000;
 
-const PAYMENT_METHODS = ['credit_card'];
+const PAYMENT_METHODS = ['pix'];
 const SOCIAL_NETWORKS = ['instagram', 'youtube', 'linkedin', 'facebook', 'tiktok', 'kwai', 'x', 'site'];
 const SOCIAL_BASE_URLS = {
   instagram: 'https://instagram.com/',
@@ -103,7 +107,6 @@ function computeState() {
   return {
     mode: MODE,
     webhookConfigured: WEBHOOK_READY,
-    publishableKey: STRIPE_PUBLISHABLE_KEY || null,
     totalVotes,
     totalSupporters: totalVotes,
     candidates,
@@ -117,29 +120,19 @@ function newReference() {
   return 'br' + crypto.randomBytes(10).toString('hex');
 }
 
-function encodeForm(obj, prefix = '') {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(obj || {})) {
-    const fullKey = prefix ? `${prefix}[${key}]` : key;
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      encodeForm(value, fullKey).forEach((v, k) => params.append(k, v));
-    } else if (Array.isArray(value)) {
-      value.forEach((item) => params.append(`${fullKey}[]`, item));
-    } else if (value !== undefined && value !== null && value !== '') {
-      params.append(fullKey, value);
-    }
-  }
-  return params;
+function mockQrCode(reference, value) {
+  const cents = Math.round(value * 100);
+  return `00020101021226850014br.gov.bcb.pix2562mock.proximopresidente/qr/${reference}5204000053039865802BR5911ProximoPres6007BRASIL6210${cents}6304ABCD`;
 }
 
-async function stripe(pathname, options = {}) {
-  const body = options.body ? encodeForm(options.body).toString() : undefined;
-  const res = await fetch('https://api.stripe.com/v1' + pathname, {
+async function pushin(pathname, options = {}) {
+  const body = options.body ? JSON.stringify(options.body) : undefined;
+  const res = await fetch(PUSHIN_PAY_BASE_URL + pathname, {
     method: options.method || 'GET',
     headers: {
-      Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
+      Authorization: `Bearer ${PUSHIN_PAY_TOKEN}`,
       Accept: 'application/json',
-      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Type': 'application/json',
     },
     body,
     signal: AbortSignal.timeout(25000),
@@ -185,19 +178,28 @@ app.options('*', (req, res) => res.status(200).end());
 
 app.use(cors());
 
-// Webhook do Stripe — registrado ANTES do express.json()
-app.get('/api/webhook/stripe', (req, res) => res.status(200).json({ ok: true }));
+// Webhook da Pushin Pay — registrado ANTES do express.json()
+app.get('/api/webhook/pushin', (req, res) => res.status(200).json({ ok: true }));
 
-app.post('/api/webhook/stripe', express.json({ type: () => true }), async (req, res) => {
-  const event = req.body || {};
-  const intentId = event?.data?.object?.id;
-  const eventType = event?.type;
-  if (!intentId || eventType !== 'payment_intent.succeeded') return res.status(200).json({ ok: true, ignored: true });
-  const charge = Object.values(state.charges).find((c) => c.stripeIntentId === intentId);
+app.post('/api/webhook/pushin', express.json({ type: () => true }), async (req, res) => {
+  const body = req.body || {};
+  const txId = String(body?.id || '');
+  const raw = String(body?.status || '');
+  if (!txId || !['paid', 'canceled', 'expired'].includes(raw)) {
+    return res.status(200).json({ ok: true, ignored: true });
+  }
+  const charge = Object.values(state.charges).find(
+    (c) => c.pushinId && String(c.pushinId).toLowerCase() === txId.toLowerCase()
+  );
   if (!charge) return res.status(200).json({ ok: true, ignored: true });
-  charge.status = 'PAID';
-  await saveState(state);
-  if (charge.type === 'promotion') await recordPromotion(charge);
+
+  const newStatus = raw === 'paid' ? 'PAID' : raw === 'canceled' ? 'CANCELED' : 'EXPIRED';
+  if (newStatus !== charge.status) {
+    charge.status = newStatus;
+    if (body.end_to_end_id) charge.end_to_end_id = body.end_to_end_id;
+    await saveState(state);
+  }
+  if (charge.status === 'PAID' && charge.type === 'promotion') await recordPromotion(charge);
   return res.status(200).json({ ok: true });
 });
 
@@ -208,19 +210,17 @@ app.get('/api/health', (req, res) =>
     ok: true,
     mode: MODE,
     webhookConfigured: WEBHOOK_READY,
-    publishableKey: STRIPE_PUBLISHABLE_KEY || null,
   })
 );
 
 app.get('/api/state', (req, res) => res.json(computeState()));
 
-// ===== divulgação paga (Cartão via Stripe) =====
+// ===== divulgação paga (PIX via Pushin Pay) =====
 app.post('/api/promote', async (req, res) => {
-  const { name, network, handle, amount, method, email } = req.body || {};
+  const { name, network, handle, amount, method } = req.body || {};
   const cleanName = String(name || '').trim().slice(0, 40);
   const cleanNetwork = String(network || '').trim().toLowerCase();
   const cleanHandle = String(handle || '').trim().slice(0, 120);
-  const cleanEmail = String(email || '').trim().toLowerCase().slice(0, 200);
   const value = Number(amount);
   const cleanMethod = String(method || 'pix').trim().toLowerCase();
 
@@ -231,25 +231,22 @@ app.post('/api/promote', async (req, res) => {
   if (!Number.isFinite(value) || value < MIN_DONATION || value > MAX_DONATION) {
     return res.status(422).json({ error: `Divulgação de R$ ${MIN_DONATION},00 a R$ ${MAX_DONATION},00.` });
   }
-  if (cleanMethod === 'credit_card') {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
-      return res.status(422).json({ error: 'Informe um e-mail válido para receber o recibo.' });
-    }
-  }
 
   const social = { name: cleanName, network: cleanNetwork, handle: cleanHandle };
 
   try {
-    // ---- modo demonstração (Cartão simulado) ----
-    if (MODE !== 'stripe') {
+    // ---- modo demonstração (PIX simulado) ----
+    if (MODE !== 'pushin') {
       const reference = newReference();
       const charge = {
         reference,
         type: 'promotion',
-        method: cleanMethod,
+        method: 'pix',
         amount: value,
         status: 'PENDING',
         mock: true,
+        qr_code: mockQrCode(reference, value),
+        qr_code_base64: null,
         ts: Date.now(),
         social,
       };
@@ -258,39 +255,34 @@ app.post('/api/promote', async (req, res) => {
       return res.json({ mode: 'mock', ...charge });
     }
 
-    // ---- modo real (Stripe) ----
+    // ---- modo real (Pushin Pay) ----
     const reference = newReference();
-    const p = await stripe('/payment_intents', {
-      method: 'POST',
-      body: {
-        amount: Math.round(value * 100),
-        currency: 'brl',
-        payment_method_types: ['card'],
-        receipt_email: cleanEmail,
-        metadata: { reference },
-        description: `Divulgação · ${cleanName}`,
-      },
-    });
-    if (p.status !== 200) {
-      const msg = p.data?.error?.message || 'Stripe não aceitou a cobrança.';
+    const payload = { value: Math.round(value * 100) };
+    if (WEBHOOK_URL) payload.webhook_url = WEBHOOK_URL;
+    const p = await pushin('/pix/cashIn', { method: 'POST', body: payload });
+    if (p.status !== 200 && p.status !== 201) {
+      const msg = p.data?.message || p.data?.error || 'Pushin Pay não aceitou a cobrança.';
       return res.status(502).json({ error: msg });
     }
 
     const charge = {
       reference,
-      stripeIntentId: p.data.id,
       type: 'promotion',
-      method: cleanMethod,
+      method: 'pix',
       amount: value,
       status: 'PENDING',
-      email: cleanEmail,
+      pushinId: p.data.id,
+      qr_code: p.data.qr_code || null,
+      qr_code_base64: p.data.qr_code_base64 || null,
+      webhook_url: p.data.webhook_url || WEBHOOK_URL || null,
       social,
       ts: Date.now(),
+      consultTs: 0,
     };
 
     state.charges[reference] = charge;
     await saveState(state);
-    return res.json({ mode: 'stripe', clientSecret: p.data.client_secret, ...charge });
+    return res.json({ mode: 'pushin', ...charge });
   } catch (err) {
     console.error('promote error:', err.message);
     return res.status(500).json({ error: 'Falha ao gerar a divulgação. Tente novamente.' });
@@ -326,7 +318,7 @@ app.post('/api/vote', async (req, res) => {
   return res.json({ ok: true, already: false, vote: { candidateId }, state: computeState() });
 });
 
-// ===== consultar status (promoção PIX/Cartão) =====
+// ===== consultar status (promoção PIX) =====
 app.get('/api/charge/:reference', async (req, res) => {
   const { reference } = req.params;
   const charge = state.charges[reference];
@@ -339,13 +331,22 @@ app.get('/api/charge/:reference', async (req, res) => {
     return res.json({ charge, state: computeState() });
   }
 
-  if (!charge.stripeIntentId) return res.json({ charge, state: computeState() });
+  if (!charge.pushinId) return res.json({ charge, state: computeState() });
+
+  // Pushin Pay autoriza consultas diretas a cada ~1 minuto — respeitamos esse limite.
+  const force = req.query.force === '1';
+  if (!force && Date.now() - (charge.consultTs || 0) < 60000) {
+    return res.json({ charge, state: computeState() });
+  }
 
   try {
-    const q = await stripe(`/payment_intents/${charge.stripeIntentId}`);
-    const newStatus = q.data?.status === 'succeeded' ? 'PAID' : 'PENDING';
+    charge.consultTs = Date.now();
+    const q = await pushin(`/transactions/${charge.pushinId}`);
+    const raw = String(q.data?.status || '');
+    const newStatus = raw === 'paid' ? 'PAID' : raw === 'canceled' ? 'CANCELED' : raw === 'expired' ? 'EXPIRED' : 'PENDING';
     if (newStatus !== charge.status) {
       charge.status = newStatus;
+      if (q.data?.end_to_end_id) charge.end_to_end_id = q.data.end_to_end_id;
       await saveState(state);
     }
     if (isPaidStatus(newStatus) && charge.type === 'promotion') {
@@ -359,7 +360,7 @@ app.get('/api/charge/:reference', async (req, res) => {
 
 // ===== simular pagamento (somente em modo demonstração) =====
 app.post('/api/charge/:reference/simulate', async (req, res) => {
-  if (MODE === 'stripe') return res.status(403).json({ error: 'Simulação disponível apenas no modo demonstração.' });
+  if (MODE === 'pushin') return res.status(403).json({ error: 'Simulação disponível apenas no modo demonstração.' });
   const charge = state.charges[req.params.reference];
   if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada.' });
   charge.status = 'PAID';
